@@ -50,6 +50,40 @@ public class Temp extends Atom {
     return id;
   }
 
+  /**
+   * Generate a printable description of this atom with a renaming of Temp values that is specified
+   * by the list ts.
+   */
+  String toString(Temps ts) {
+    /* If this Temp appears in the list ts, and is followed by i other Temp objects, then it will be displayed as t_i.
+     * This allows the list ts to be built up by pushing new bindings on to the front of ts as they are encountered.
+     * A downside is that it will require a full traversal of ts for every Temp.  However, if we added elements to ts
+     * in order of occurrence, then we could still expect a typical case to require traversal of half the list (so the
+     * constant factor would be the same) and the task of building the list would be more complex.  Another alternative
+     * would be to use a more efficient lookup structure than a list, although that would likely add other overhead.
+     */
+    for (; ts != null; ts = ts.next) {
+      if (ts.head == this) {
+        int i = 0;
+        do {
+          ts = ts.next;
+          i++;
+        } while (ts != null);
+        return "t" + (i - 1);
+      }
+    }
+    return toString();
+  }
+
+  /**
+   * Test to see if two atoms are the same. For Temp values, we use pointer equality to determine
+   * object equality. For all other types of Atom, we use double dispatch to compare component
+   * values.
+   */
+  public boolean sameAtom(Atom that) {
+    return this == that;
+  }
+
   /** Test for an occurrence of this variable in the given array of atoms. */
   public boolean occursIn(Atom[] as) {
     for (int i = 0; i < as.length; i++) {
@@ -89,6 +123,7 @@ public class Temp extends Atom {
     return vs;
   }
 
+  /** Test to determine whether this atom appears in the given list of Temps. */
   boolean isIn(Temps vs) {
     return Temps.isIn(this, vs);
   }
@@ -106,6 +141,10 @@ public class Temp extends Atom {
     return Temps.remove(this, vs);
   }
 
+  /**
+   * Extend the given substitution with a mapping from this Temp to the specified Atom. If this is
+   * an Atom but not a Temp, then just return the input substitution without modifications.
+   */
   public TempSubst mapsTo(Atom a, TempSubst s) {
     return new TempSubst(this, a, s);
   }
@@ -231,17 +270,7 @@ public class Temp extends Atom {
     return (thisidx == thatidx && (thisidx >= 0 || this.sameAtom(that)));
   }
 
-  /**
-   * Update the information that we have recorded about a given formal parameter to reflect the use
-   * of this actual parameter. The input, orig, will be one of: - null, indicating that no previous
-   * information has been found - a specific Const or Top, indicating that this single value was
-   * used in all previous calls - a special value, top, indicating that multiple distinct values
-   * have been encountered in previous calls.
-   */
-  Atom update(Atom orig) {
-    return Atom.top;
-  }
-
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     if (type != null) {
       type = type.canonType(set);
@@ -384,6 +413,37 @@ public class Temp extends Atom {
       }
     }
     return ys;
+  }
+
+  /**
+   * Determine whether this item is for a non-Unit, corresponding to a value that requires a
+   * run-time representation in the generated LLVM.
+   */
+  boolean nonUnit() {
+    return type.nonUnit();
+  }
+
+  /**
+   * Filter all unit values from this array producing either a new (shorter) array, or just
+   * returning the original array if all of the elements are non-units.
+   */
+  static Temp[] nonUnits(Temp[] xs) {
+    int nonUnits = 0; // count number of non unit components
+    for (int i = 0; i < xs.length; i++) {
+      if (xs[i].nonUnit()) {
+        nonUnits++;
+      }
+    }
+    if (nonUnits >= xs.length) { // all components are non unit
+      return xs; // so there is no change
+    }
+    Temp[] nxs = new Temp[nonUnits]; // make array with just the non units
+    for (int i = 0, j = 0; j < nonUnits; i++) {
+      if (xs[i].nonUnit()) {
+        nxs[j++] = xs[i];
+      }
+    }
+    return nxs;
   }
 
   /** Find the LLVM type for this Temp value. */

@@ -22,13 +22,14 @@ import compiler.*;
 import compiler.BuiltinPosition;
 import compiler.Position;
 import core.*;
+import java.io.PrintWriter;
 import java.math.BigInteger;
 
-/** Represents the type constructor for a specific bitdata layout. */
+/** Represents a type constructor for a specific bitdata layout. */
 public class BitdataLayout extends DataName {
 
   /** The bitdata type for this layout. */
-  private BitdataName bn;
+  private BitdataType bt;
 
   /** The tagbits for this layout. */
   private BigInteger tagbits;
@@ -43,14 +44,12 @@ public class BitdataLayout extends DataName {
   public BitdataLayout(
       Position pos,
       String id,
-      Kind kind,
-      int arity,
-      BitdataName bn,
+      BitdataType bt,
       BigInteger tagbits,
       BitdataField[] fields,
       obdd.Pat pat) {
-    super(pos, id, kind, arity);
-    this.bn = bn;
+    super(pos, id);
+    this.bt = bt;
     this.tagbits = tagbits;
     this.fields = fields;
     this.pat = pat;
@@ -59,44 +58,12 @@ public class BitdataLayout extends DataName {
     for (int i = 0; i < fields.length; i++) {
       stored[i] = fields[i].getType();
     }
-    // TODO: use a different id?
-    cfuns = new Cfun[] {new Cfun(pos, id, this, 0, new AllocType(stored, this.asType()))};
-  }
-
-  public BitdataLayout(
-      Position pos,
-      String id,
-      BitdataName bn,
-      BigInteger tagbits,
-      BitdataField[] fields,
-      obdd.Pat pat) {
-    this(pos, id, KAtom.STAR, fields.length, bn, tagbits, fields, pat);
-  }
-
-  void write(TypeWriter tw, int prec, int args) {
-    if (args == 0) {
-      bn.write(tw, prec, 0);
-      tw.write(".");
-      tw.write(id);
-    } else {
-      applic(tw, prec, args, 0);
-    }
-  }
-
-  public int getWidth() {
-    return pat.getWidth();
-  }
-
-  public Type bitSize() {
-    return bn.bitSize();
+    cfuns =
+        new Cfun[] {new Cfun(pos, bt + "." + id, this, 0, new AllocType(stored, this.asType()))};
   }
 
   public BitdataField[] getFields() {
     return fields;
-  }
-
-  public boolean isNullary() {
-    return fields.length == 0;
   }
 
   private obdd.MaskTestPat maskTest;
@@ -105,8 +72,33 @@ public class BitdataLayout extends DataName {
     this.maskTest = maskTest;
   }
 
-  public AllocType cfunType() {
-    return new AllocType((isNullary() ? Type.noTypes : new Type[] {this.asType()}), bn.asType());
+  /** Return the kind of this type constructor. */
+  public Kind getKind() {
+    return KAtom.STAR;
+  }
+
+  /** Return the arity of this type constructor. */
+  public int getArity() {
+    return fields.length;
+  }
+
+  /**
+   * Write this type to the specified writer, in a context with the specified precedence and number
+   * of arguments.
+   */
+  void write(TypeWriter tw, int prec, int args) {
+    if (args == 0) {
+      bt.write(tw, prec, 0);
+      tw.write(".");
+      tw.write(id);
+    } else {
+      applic(tw, prec, args, 0);
+    }
+  }
+
+  /** Find the Bitdata Layout associated with values of this type, or else return null. */
+  public BitdataLayout bitdataLayout() {
+    return this;
   }
 
   /** Return the bit pattern for this object. */
@@ -119,6 +111,18 @@ public class BitdataLayout extends DataName {
     return cfuns[0];
   }
 
+  public int getWidth() {
+    return pat.getWidth();
+  }
+
+  public boolean isNullary() {
+    return fields.length == 0;
+  }
+
+  public AllocType cfunType() {
+    return new AllocType((isNullary() ? Type.noTypes : new Type[] {this.asType()}), bt.asType());
+  }
+
   public void debugDump() {
     debug.Log.println(
         "Constructor "
@@ -126,7 +130,7 @@ public class BitdataLayout extends DataName {
             + ": width "
             + pat.getWidth()
             + " ["
-            + Type.numWords(pat.getWidth())
+            + Word.numWords(pat.getWidth())
             + " word(s)], tagbits 0x"
             + tagbits.toString(16)
             + " and "
@@ -139,35 +143,42 @@ public class BitdataLayout extends DataName {
     debug.Log.println("  mask-test " + maskTest.toString(id));
   }
 
-  /**
-   * Find the Bitdata Layout associated with values of this type, if there is one, or else return
-   * null. TODO: perhaps this code should be colocated with bitdataName()?
-   */
-  public BitdataLayout bitdataLayout() {
-    return this;
+  /** Print a definition for this bitdata type using source level syntax. */
+  void dumpTypeDefinition(PrintWriter out) {
+    /* Do not show BitdataLayouts as separate types. */
   }
 
+  void dumpBitdataLayout(PrintWriter out) {
+    out.print(id);
+    out.print(" [ ");
+    int offset = pat.getWidth();
+    for (int i = 0; i < fields.length; i++) {
+      offset = fields[i].dumpBitdataField(out, tagbits, offset);
+      if (offset > 0) { // still bits/fields to show ?
+        out.print(" | ");
+      }
+    }
+    if (offset > 0) { // low order tagbits
+      out.print(Bits.toString(tagbits, offset));
+    }
+    out.println(" ]");
+    out.print("    -- ");
+    out.print(maskTest.toString(id));
+    out.println();
+  }
+
+  /**
+   * Return the canonical version of a DataName wrt the given set, replacing component types with
+   * canonical versions as necessary. This is extracted as a separate method from canonTycon so that
+   * it can be used in canonCfun, with a return type that guarantees a DataName result.
+   */
   DataName canonDataName(TypeSet set) {
-    // We do not need to calculate a new version of the type in these cases because we know that
-    // none of the
-    // Cfun types will change (they are all of the form T.Lab -> T).
-    return this;
-  }
-
-  /**
-   * Return true if this is a newtype constructor (i.e., a single argument constructor function for
-   * a nonrecursive type that only has one constructor).
-   */
-  public boolean isNewtype() { // Don't treat bitdata types as newtypes
-    return false;
-  }
-
-  Type specializeTycon(MILSpec spec, Type inst) {
-    return inst;
-  }
-
-  DataName specializeDataName(MILSpec spec, Type inst) {
-    // Do not specialize bitdata types
+    // We do not need to calculate a new version of bitdata types because we know that none of the
+    // Cfun types will change (they are all of the form T.Lab -> T).  It is sufficient just to
+    // register
+    // occurrences in the tycons set so that we have a full record of which tycons are actually
+    // used.
+    set.addTycon(this);
     return this;
   }
 
@@ -179,7 +190,7 @@ public class BitdataLayout extends DataName {
     Cfun[] cfuns = new Cfun[layouts.length];
     for (int i = 0; i < layouts.length; i++) {
       BitdataLayout layout = layouts[i];
-      cfuns[i] = new Cfun(layout.pos, layout.id, layout.bn, i, layout.cfunType());
+      cfuns[i] = new Cfun(layout.pos, layout.id, layout.bt, i, layout.cfunType());
     }
     return cfuns;
   }
@@ -207,7 +218,7 @@ public class BitdataLayout extends DataName {
 
   /** Return the representation vector for values of this type. */
   Type[] repCalc() {
-    return bn.repCalc();
+    return bt.repCalc();
   }
 
   Code repTransformAssert(RepTypeSet set, Cfun cf, Atom a, Code c) {
@@ -241,7 +252,7 @@ public class BitdataLayout extends DataName {
       params = Temp.makeTemps(fields.length); // Can assume all/any fields must have width 0
       code = new Done(new DataAlloc(Cfun.Unit).withArgs());
     } else {
-      int n = Type.numWords(total); // number of words in output
+      int n = Word.numWords(total); // number of words in output
       Temp[][] args = new Temp[fields.length][]; // args for each input
       Temp[] ws = Temp.makeTemps(n);
       code = new Done(new Return(Temp.clone(ws)));
@@ -249,8 +260,13 @@ public class BitdataLayout extends DataName {
 
       // Add code to set each field (assuming that each field is already zero-ed out):
       for (int k = 0; k < fields.length; k++) {
-        args[k] = Temp.makeTemps(Type.numWords(fields[k].getWidth()));
-        code = fields[k].genUpdateZeroedField(total, ws, args[k], code);
+        int w = fields[k].getWidth();
+        if (w > 0) { // add arguments for this field, and code to insert into result
+          args[k] = Temp.makeTemps(Word.numWords(w));
+          code = fields[k].genUpdateZeroedField(total, ws, args[k], code);
+        } else { // create an argument variable, but no code
+          args[k] = Temp.makeTemps(1);
+        }
       }
 
       // Set initial value for tagbits:
@@ -271,9 +287,9 @@ public class BitdataLayout extends DataName {
   }
 
   static Block generateBitConcat(Position pos, int u, int v) { // :: Bit u -> Bit v -> Bit (u+v)
-    Temp[] as = Temp.makeTemps(Type.numWords(u)); // as :: Bit u
-    Temp[] bs = Temp.makeTemps(Type.numWords(v)); // bs :: Bit v
-    Temp[] ws = Temp.makeTemps(Type.numWords(u + v));
+    Temp[] as = Temp.makeTemps(Word.numWords(u)); // as :: Bit u
+    Temp[] bs = Temp.makeTemps(Word.numWords(v)); // bs :: Bit v
+    Temp[] ws = Temp.makeTemps(Word.numWords(u + v));
     return new Block(
         pos,
         Temp.append(as, bs),
@@ -317,14 +333,14 @@ public class BitdataLayout extends DataName {
       Temp[] vs = Temp.makeTemps(1);
       Tail t =
           total == 0 // width 0 case
-              ? new Return(FlagConst.True)
+              ? new Return(Flag.True)
               : maskNat.testBit(0) // nonzero mask ==> depends on vs[0]
                   ? ((eq != bitsNat.testBit(0)) ? new Return(vs) : Prim.bnot.withArgs(vs[0]))
                   : new Return(
-                      FlagConst.fromBool(eq == bitsNat.testBit(0))); // zero mask ==> const function
+                      Flag.fromBool(eq == bitsNat.testBit(0))); // zero mask ==> const function
       maskTestBlock = new Block(cf.getPos(), "masktest_" + cf, vs, new Done(t));
     } else {
-      int n = Type.numWords(total); // number of words in output
+      int n = Word.numWords(total); // number of words in output
       Atom[] mask = Const.atoms(maskNat, total);
       Atom[] bits = Const.atoms(bitsNat, total);
       maskTestBlock = eq ? Block.returnFalse : Block.returnTrue; // base case, if no data to compare
@@ -374,7 +390,7 @@ public class BitdataLayout extends DataName {
     Temp[] params = Temp.makeTemps(3);
     Temp w = new Temp();
     return new Block(
-        BuiltinPosition.position,
+        BuiltinPosition.pos,
         name,
         params,
         new Bind(w, Prim.and.withArgs(params[0], params[1]), new Done(p.withArgs(w, params[2]))));
@@ -384,7 +400,12 @@ public class BitdataLayout extends DataName {
     generateConstructor(cf);
     generateMaskTest(cf);
     for (int i = 0; i < fields.length; i++) {
-      fields[i].calculateBitdataBlocks(cf, this);
+      fields[i].calculateBitdataBlocks(this);
     }
+  }
+
+  /** Return the nat that specifies the bit size of the type produced by this type constructor. */
+  public Type bitSize() {
+    return bt.bitSize();
   }
 }

@@ -21,17 +21,31 @@ package mil;
 import compiler.*;
 import compiler.BuiltinPosition;
 import core.*;
+import java.io.PrintWriter;
 
-public class TupleCon extends PrimTycon {
+public class TupleCon extends Tycon {
+
+  private int arity;
 
   private TupleCon(int arity) {
-    super(BuiltinPosition.position, "TupleCon" + arity, Kind.tuple(arity), arity);
+    super(BuiltinPosition.pos, "TupleCon" + arity);
+    this.arity = arity;
   }
 
-  private static TupleCon[] tupleCache = new TupleCon[10];
+  public Kind getKind() {
+    return Kind.tuple(arity);
+  }
+
+  public int getArity() {
+    return arity;
+  }
+
+  private static TupleCon[] tupleCache;
 
   public static TupleCon tuple(int n) {
-    if (n >= tupleCache.length) {
+    if (tupleCache == null) {
+      tupleCache = new TupleCon[10];
+    } else if (n >= tupleCache.length) {
       TupleCon[] newCache = new TupleCon[Math.max(n + 1, 2 * tupleCache.length)];
       for (int i = 0; i < tupleCache.length; i++) {
         newCache[i] = tupleCache[i];
@@ -42,6 +56,15 @@ public class TupleCon extends PrimTycon {
     }
     // Code to update cache[arg] = ... will be appended here.
     return tupleCache[n] = new TupleCon(n);
+  }
+
+  /**
+   * Find the arity of this tuple type (i.e., the number of components) or return (-1) if it is not
+   * a tuple type. Parameter n specifies the number of arguments that have already been found; it
+   * should be 0 for the initial call.
+   */
+  int tupleArity(Type[] tenv, int n) {
+    return (n == arity) ? n : (-1);
   }
 
   void write(TypeWriter tw, int prec, int args) {
@@ -60,6 +83,14 @@ public class TupleCon extends PrimTycon {
     } else {
       applic(tw, prec, args, 0);
     }
+  }
+
+  /**
+   * Print a definition for this type constructor using source level syntax. TODO: Find a more
+   * appropriate place for this code ...
+   */
+  void dumpTypeDefinition(PrintWriter out) {
+    /* do nothing */
   }
 
   /**
@@ -129,14 +160,25 @@ public class TupleCon extends PrimTycon {
     if (arity != args) {
       debug.Internal.error("TupleCon toLLVM arity mismatch");
     }
-    if (arity == 0) {
+    int nonUnits = 0; // count the number of non unit types
+    int lastNon = 0; // position of last non unit
+    for (int i = 0; i < arity; i++) {
+      if (lm.stackArg(i + 1).nonUnit()) {
+        nonUnits++;
+        lastNon = i;
+      }
+    }
+    if (nonUnits == 0) {
       return llvm.Type.vd;
-    } else if (arity == 1) {
-      return lm.toLLVM(lm.stackArg(1));
+    } else if (nonUnits == 1) { // only one?  then lastNon gives its position
+      return lm.toLLVM(lm.stackArg(lastNon + 1));
     } else {
-      llvm.Type[] tys = new llvm.Type[arity];
-      for (int i = 0; i < arity; i++) {
-        tys[i] = lm.toLLVM(lm.stackArg(i + 1));
+      llvm.Type[] tys = new llvm.Type[nonUnits];
+      for (int i = 0, j = 0; j < nonUnits; i++) {
+        Type t = lm.stackArg(i + 1);
+        if (t.nonUnit()) {
+          tys[j++] = lm.toLLVM(t);
+        }
       }
       // Define a symbolic name for this type:
       llvm.DefinedType dt = new llvm.DefinedType(new llvm.StructType(tys));

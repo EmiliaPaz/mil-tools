@@ -20,9 +20,11 @@ package mil;
 
 import compiler.*;
 import core.*;
-import java.io.IOException;
 import java.io.PrintWriter;
 
+/**
+ * A null-terminated linked list of items that can be accessed using (public) head and next fields.
+ */
 public class CFGs {
 
   public CFG head;
@@ -35,22 +37,7 @@ public class CFGs {
     this.next = next;
   }
 
-  public static void toDot(CFGs cfgs) {
-    PrintWriter out = new PrintWriter(System.out);
-    toDot(out, cfgs);
-    out.flush();
-  }
-
-  public static void toDot(String name, CFGs cfgs) {
-    try {
-      PrintWriter out = new PrintWriter(name);
-      toDot(out, cfgs);
-      out.close();
-    } catch (IOException e) {
-      System.out.println("Attempt to create dot output in \"" + name + "\" failed");
-    }
-  }
-
+  /** Write a dot format description of the given list of CFGs to the specified PrintWriter. */
   public static void toDot(PrintWriter out, CFGs cfgs) {
     out.println("digraph CFGs {");
     for (; cfgs != null; cfgs = cfgs.next) {

@@ -27,14 +27,14 @@ import java.io.PrintWriter;
 public abstract class PrimFtoW extends Prim {
 
   /** Default constructor. */
-  public PrimFtoW(String id, int arity, int outity, int purity, BlockType blockType) {
-    super(id, arity, outity, purity, blockType);
+  public PrimFtoW(String id, int purity, BlockType blockType) {
+    super(id, purity, blockType);
   }
 
-  abstract int op(boolean b);
+  abstract long op(boolean b);
 
   void exec(PrintWriter out, int fp, Value[] stack) throws Failure {
-    stack[fp] = new IntValue(op(stack[fp].getBool()));
+    stack[fp] = new WordValue(op(stack[fp].getBool()));
   }
 
   Code fold(boolean n) {

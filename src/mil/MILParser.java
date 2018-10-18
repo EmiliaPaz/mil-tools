@@ -49,13 +49,15 @@ public class MILParser extends CoreParser implements MILTokens {
               throw new Failure(lexer.getPos(), "Missing file name for require declaration");
             }
             String name = lexer.getLexeme();
-            if (name.endsWith(".mil")) {
+            if (name.endsWith(".mil") || name.endsWith(".lmil")) {
               ast.requires(loader.require(name));
             } else {
               handler.report(
                   new Failure(
                       lexer.getPos(),
-                      "Filename \"" + name + "\" does not have \".mil\" extension"));
+                      "Filename \""
+                          + name
+                          + "\" does not end with \".mil\" (or \".lmil\") extension"));
             }
             lexer.nextToken(/* STRLIT */ );
             lexer.itemEnd("require declaration");
@@ -173,17 +175,37 @@ public class MILParser extends CoreParser implements MILTokens {
     return false;
   }
 
-  private TopLevelExp parseTopLevel(Position pos, String[] ids) throws Failure {
-    String[] args;
-    if (lexer.match(BOPEN)) {
-      args = parseIds();
-      require(BCLOSE);
+  private DefnExp parseTopLevel(Position pos, String[] ids) throws Failure {
+    if (lexer.match(AREA)) {
+      if (ids.length != 1) {
+        throw new Failure(lexer.getPos(), "An area definition can only bind a single identifier");
+      }
+      TypeExp typeExp = typeAtomExp(); // Read expression describing area type
+      AtomExp init = parseAtom(); // Read initializer expression
+      TypeExp alignExp = lexer.match(ALIGNED) ? typeExp() : null; // Read (optional) alignment
+      lexer.itemEnd("area definition");
+      return new AreaDefnExp(pos, ids[0], typeExp, init, alignExp);
+    } else if (lexer.getToken() == STRLIT) {
+      if (ids.length != 1) {
+        throw new Failure(
+            lexer.getPos(), "A string area definition can only bind a single identifier");
+      }
+      String str = lexer.getLexeme();
+      lexer.nextToken(/* STRLIT */ );
+      lexer.itemEnd("string area definition");
+      return new StringAreaDefnExp(pos, ids[0], str);
     } else {
-      args = new String[0];
+      String[] args;
+      if (lexer.match(BOPEN)) {
+        args = parseIds();
+        require(BCLOSE);
+      } else {
+        args = new String[0];
+      }
+      TopLevelExp tle = new TopLevelExp(pos, ids, args, parseCode());
+      lexer.itemEnd("top-level definition");
+      return tle;
     }
-    TopLevelExp tle = new TopLevelExp(pos, ids, args, parseCode());
-    lexer.itemEnd("top-level definition");
-    return tle;
   }
 
   /**
@@ -477,8 +499,12 @@ public class MILParser extends CoreParser implements MILTokens {
 
       case NATLIT:
         {
-          int n = lexer.getSmallNat();
-          lexer.nextToken(/* NATLIT */ );
+          int n;
+          try {
+            n = lexer.getInt();
+          } finally {
+            lexer.nextToken(/* NATLIT */ );
+          }
           return new SelExp(pos, id, n, parseAtom());
         }
 
@@ -522,15 +548,26 @@ public class MILParser extends CoreParser implements MILTokens {
 
       case NATLIT:
         {
-          IntConstExp e = new IntConstExp(lexer.getSmallNat());
-          lexer.nextToken(/* NATLIT */ );
+          WordExp e;
+          try {
+            e = new WordExp(lexer.getWord());
+          } finally {
+            lexer.nextToken(/* NATLIT */ );
+          }
           return e;
         }
 
       case BITLIT:
         {
-          BitConstExp e = new BitConstExp(lexer.getBigNat(), lexer.getNumBits());
+          BitsExp e = new BitsExp(lexer.getNat(), lexer.getNumBits());
           lexer.nextToken(/* BITLIT */ );
+          return e;
+        }
+
+      case STRLIT:
+        {
+          StringExp e = new StringExp(lexer.getPos(), lexer.getLexeme());
+          lexer.nextToken(/* STRLIT */ );
           return e;
         }
     }
@@ -613,7 +650,7 @@ public class MILParser extends CoreParser implements MILTokens {
    */
   protected TypeExp maybeTypeArrow() {
     if (lexer.getToken() == MILTO) {
-      TypeExp t = new TyconTypeExp(lexer.getPos(), MILArrow.milArrow);
+      TypeExp t = new TyconTypeExp(lexer.getPos(), Tycon.milArrow);
       lexer.nextToken(/* ->> */ );
       return t;
     }

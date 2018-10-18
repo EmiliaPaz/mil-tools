@@ -118,9 +118,7 @@ public class JavaSource extends Source {
               skip();
             }
             if (i != 4) {
-              /* TODO: fix the zero column number in the
-               * following error diagnostic message ...
-               */
+              // TODO: fix the zero column number in the following diagnostic message ...
               report(
                   new Warning(
                       new SourcePosition(this, lineNumber, 0), "Error in Unicode escape sequence"));
@@ -128,13 +126,7 @@ public class JavaSource extends Source {
               buf.append((char) n);
             }
           } else {
-            buf.append('\\');
-            if (c0 == (-1)) {
-              break;
-            } else {
-              buf.append((char) c0);
-            }
-            skip();
+            buf.append('\\'); // Output the delayed backslash
           }
         } else if (c0 == '\t' && tabwidth > 0) { // Expand tabs
           int n = tabwidth - (buf.length() % tabwidth);

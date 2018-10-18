@@ -49,19 +49,14 @@ public class Alt {
   }
 
   /** Display a printable representation of this MIL construct on the specified PrintWriter. */
-  public void dump(PrintWriter out) {
+  public void dump(PrintWriter out, Temps ts) {
     out.print(cf.toString());
     out.print(" -> ");
-    bc.displayln(out);
+    bc.displayln(out, ts);
   }
 
-  /** Apply a TempSubst to this Alt, skipping if the substitution is empty. */
-  public Alt apply(TempSubst s) {
-    return (s == null) ? this : forceApply(s);
-  }
-
-  /** Apply a TempSubst to this Alt. */
-  public Alt forceApply(TempSubst s) { // cf -> bc
+  /** Force the application of a TempSubst to this Alt. */
+  public Alt forceApply(TempSubst s) {
     return new Alt(cf, bc.forceApplyBlockCall(s));
   }
 
@@ -194,10 +189,7 @@ public class Alt {
     bc.eliminateDuplicates();
   }
 
-  void collect() {
-    bc.collect();
-  }
-
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     if (type != null) {
       type = type.canonAllocType(set);
@@ -265,14 +257,14 @@ public class Alt {
   }
 
   Alt repTransformAlt(RepTypeSet set, RepEnv env) {
-    return new Alt(cf.repCfun().canonCfun(set), bc.repTransformBlockCall(set, env));
+    return new Alt(cf.canonCfun(set), bc.repTransformBlockCall(set, env));
   }
 
   static Code repTransformBitdataCase(
-      RepTypeSet set, RepEnv env, BitdataName bn, Atom a, Alt[] alts, BlockCall def) {
+      RepTypeSet set, RepEnv env, BitdataType bt, Atom a, Alt[] alts, BlockCall def) {
     //  Find the last relevant alternative
     int last = 0;
-    for (obdd.Pat pat = obdd.Pat.empty(bn.getPat().getWidth()); last < alts.length; last++) {
+    for (obdd.Pat pat = obdd.Pat.empty(bt.getPat().getWidth()); last < alts.length; last++) {
       pat = alts[last].cf.getPat().or(pat);
       if (pat.isAll()) { // No need to progress further once all bit patterns have been matched.
         break;
@@ -304,16 +296,24 @@ public class Alt {
         Temp[] ps = Temps.toArray(ts); // turn in to an array
         Temp[] vs = new Temp[ps.length]; // fresh variables
         // TODO: do a better job finding a position here ...
-        Block b =
-            new Block(BuiltinPosition.position, vs, code.apply(TempSubst.extend(ps, vs, null)));
+        Block b = new Block(BuiltinPosition.pos, vs, code.apply(TempSubst.extend(ps, vs, null)));
         eb = new BlockCall(b, ps);
       }
     }
   }
 
   /** Find the argument variables that are used in this Code sequence. */
-  Temps addArgs() throws Failure { // cf -> bc
+  Temps addArgs() throws Failure {
     return bc.addArgs(null);
+  }
+
+  /**
+   * Count the number of calls to blocks, both regular and tail calls, in this abstract syntax
+   * fragment. This is suitable for counting the calls in the main function; unlike countCalls, it
+   * does not skip tail calls at the end of a code sequence.
+   */
+  void countAllCalls() {
+    bc.countAllCalls();
   }
 
   /**
@@ -345,17 +345,18 @@ public class Alt {
       llvm.Value[] nums = new llvm.Value[nalts];
       String[] bs = new String[nalts];
       for (int i = 0; i < nalts; i++) {
-        nums[i] = new llvm.Int(alts[i].cf.getNum());
+        nums[i] = new llvm.Word(alts[i].cf.getNum());
         bs[i] = succs[i].label();
       }
-      llvm.Type dt = LLVMMap.tagType; // the type of the tag
+      llvm.Type dt = LLVMMap.tagType(); // the type of the tag
       llvm.Local tag = vm.reg(dt); // a register to hold the tag
-      llvm.Local addr = vm.reg(dt.ptr()); // a register that points to the tag
+      llvm.Type at = dt.ptr(); // the type of pointers to the tag
+      llvm.Local addr = vm.reg(at); // a register that points to the tag
       return new llvm.CodeComment(
           "read the tag for a data object",
           new llvm.Op(
               addr,
-              new llvm.Getelementptr(v, llvm.Int.ZERO, llvm.Int.ZERO),
+              new llvm.Getelementptr(at, v, llvm.Word.ZERO, llvm.Word.ZERO),
               new llvm.Op(
                   tag,
                   new llvm.Load(addr),

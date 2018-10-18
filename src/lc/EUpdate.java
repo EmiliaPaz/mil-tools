@@ -57,9 +57,9 @@ class EUpdate extends PosExpr {
   private BitdataField[] bfields;
 
   /**
-   * Perform a scope analysis on this expression, creating a Temp object for each variable binding,
-   * checking that all of the identifiers that it references correspond to bound variables, and
-   * returning the set of free variables in the term.
+   * Perform scope analysis on this expression, creating a Temp for each variable binding, checking
+   * that all of the identifiers it references correspond to bound variables, and returning the set
+   * of free variables in the term.
    */
   DefVars inScopeOf(Handler handler, MILEnv milenv, Env env) { // e [ fields ]
     return EField.inScopeOf(handler, milenv, env, e.inScopeOf(handler, milenv, env), fields);
@@ -90,21 +90,21 @@ class EUpdate extends PosExpr {
   Type inferType(TVarsInScope tis) throws Failure { // e [ fields ]
     // TODO: refactor to avoid duplication of ESelect code ...
     Type et = e.inferType(tis).skeleton();
-    BitdataName bn = et.bitdataName();
+    BitdataType bt = et.bitdataType();
     BitdataLayout layout;
-    if (bn == null) {
+    if (bt == null) {
       layout = et.bitdataLayout();
       if (layout == null) {
         throw new Failure(pos, "Invalid update: no layout for " + et);
       }
       cf = null; // et is a layout type, so no outer constructor is involved
     } else {
-      BitdataLayout[] layouts = bn.getLayouts();
+      BitdataLayout[] layouts = bt.getLayouts();
       if (layouts.length != 1) {
         throw new Failure(pos, "Invalid update: " + et + " has multiple constructors");
       }
       layout = layouts[0];
-      cf = bn.getCfuns()[0]; // record outer constructor
+      cf = bt.getCfuns()[0]; // record outer constructor
     }
     BitdataField[] lfields = layout.getFields(); // Fields from layout
     bfields = new BitdataField[fields.length]; // Fields to update

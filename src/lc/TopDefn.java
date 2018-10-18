@@ -22,6 +22,7 @@ import compiler.*;
 import core.*;
 import mil.*;
 
+/** A base class for definitions that are only valid at the top level in an LC program. */
 public abstract class TopDefn {
 
   protected Position pos;
@@ -32,13 +33,28 @@ public abstract class TopDefn {
   }
 
   /**
+   * Validate this top level definition and add corresponding entries to the environment, if
+   * necessary.
+   */
+  void validateTopDefn(Handler handler, MILEnv milenv) throws Failure {
+    /* Default behavior is to do nothing */
+  }
+
+  /**
    * Run scope analysis on a top level lc definition to ensure that all the items identified as
-   * exports or entrypoints are in scope.
+   * exports or entrypoints are in scope, either as a binding in this program, or as a Top that is
+   * visible in the current environment.
    */
   abstract void scopeTopDefn(Handler handler, MILEnv milenv, Env env) throws Failure;
 
-  void liftTopDefn(LiftEnv lenv) {
-    /* nothing to do here! */
+  /** Check types of expressions appearing in top-level definitions. */
+  abstract void inferTypes(Handler handler) throws Failure;
+
+  abstract void liftTopDefn(LiftEnv lenv);
+
+  /** Generate code, if necessary, for top-level definitions. */
+  void compileTopDefn() {
+    /* Default is to do nothing */
   }
 
   abstract void addExports(MILProgram mil, MILEnv milenv);

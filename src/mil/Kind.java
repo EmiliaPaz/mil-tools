@@ -19,7 +19,9 @@
 package mil;
 
 import compiler.*;
+import compiler.Position;
 import core.*;
+import java.io.PrintWriter;
 
 public abstract class Kind {
 
@@ -38,10 +40,12 @@ public abstract class Kind {
     return that == this;
   }
 
-  private static Kind[] simpleCache = new Kind[10];
+  private static Kind[] simpleCache;
 
   public static Kind simple(int n) {
-    if (n >= simpleCache.length) {
+    if (simpleCache == null) {
+      simpleCache = new Kind[10];
+    } else if (n >= simpleCache.length) {
       Kind[] newCache = new Kind[Math.max(n + 1, 2 * simpleCache.length)];
       for (int i = 0; i < simpleCache.length; i++) {
         newCache[i] = simpleCache[i];
@@ -55,10 +59,12 @@ public abstract class Kind {
     return fillCache(simpleCache, n, KAtom.STAR);
   }
 
-  private static Kind[] tupleCache = new Kind[10];
+  private static Kind[] tupleCache;
 
   public static Kind tuple(int n) {
-    if (n >= tupleCache.length) {
+    if (tupleCache == null) {
+      tupleCache = new Kind[10];
+    } else if (n >= tupleCache.length) {
       Kind[] newCache = new Kind[Math.max(n + 1, 2 * tupleCache.length)];
       for (int i = 0; i < tupleCache.length; i++) {
         newCache[i] = tupleCache[i];
@@ -112,5 +118,9 @@ public abstract class Kind {
 
   Kind getRng() {
     return null;
+  }
+
+  Type makeHead(Position pos, PrintWriter out, int i, Type h) {
+    return h;
   }
 }

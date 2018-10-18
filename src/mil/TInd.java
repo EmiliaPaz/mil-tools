@@ -189,6 +189,32 @@ public class TInd extends Type {
   }
 
   /**
+   * Find the arity of this tuple type (i.e., the number of components) or return (-1) if it is not
+   * a tuple type. Parameter n specifies the number of arguments that have already been found; it
+   * should be 0 for the initial call.
+   */
+  int tupleArity(Type[] tenv, int n) {
+    return bound.tupleArity(boundenv, n);
+  }
+
+  /**
+   * Find the canonical version of this type in the given set, using the specified environment to
+   * interpret TGens, and assuming that we have already pushed a certain number of args for this
+   * type on the stack.
+   */
+  Type canonType(Type[] env, TypeSet set, int args) {
+    return bound.canonType(boundenv, set, args);
+  }
+
+  Type apply(Type[] thisenv, TVarSubst s) {
+    return bound.apply(boundenv, s);
+  }
+
+  Type canonArgs(Type[] tenv, TypeSet set, int args) {
+    return bound.canonArgs(boundenv, set, args);
+  }
+
+  /**
    * Return the natural number type that specifies the BitSize of this type (required to be of kind
    * *) or null if this type has no BitSize (i.e., no bit-level representation). This method should
    * only be used with a limited collection of classes (we only expect to use it with top-level,
@@ -208,25 +234,12 @@ public class TInd extends Type {
     return bound.bitSize(boundenv, a.with(tenv));
   }
 
-  /**
-   * Worker method for calculating the BitSize for a type of the form (this a b) (i.e., this,
-   * applied to two arguments, a and b). The specified type environment, tenv, is used for this, a,
-   * and b.
-   */
-  Type bitSize(Type[] tenv, Type a, Type b) {
-    return bound.bitSize(boundenv, a.with(tenv), b.with(tenv));
-  }
-
   public Pat bitPat(Type[] tenv) {
     return bound.bitPat(boundenv);
   }
 
   Pat bitPat(Type[] tenv, Type a) {
     return bound.bitPat(boundenv, a.with(tenv));
-  }
-
-  Pat bitPat(Type[] tenv, Type a, Type b) {
-    return bound.bitPat(boundenv, a.with(tenv), b.with(tenv));
   }
 
   /**
@@ -254,28 +267,43 @@ public class TInd extends Type {
     return bound.byteSize(boundenv, a.with(tenv), b.with(tenv));
   }
 
-  Type byteSizeStoredRef(Type[] tenv) {
-    return bound.byteSizeStoredRef(boundenv);
-  }
-
-  Type byteSizeStoredRef(Type[] tenv, Type a) {
-    return bound.byteSizeStoredRef(boundenv, a.with(tenv));
-  }
-
-  Type byteSizeStoredRef(Type[] tenv, Type a, Type b) {
-    return bound.byteSizeStoredRef(boundenv, a.with(tenv), b.with(tenv));
+  /** Determine if this is a type of the form (Ref a) or (Ptr a) for some area type a. */
+  boolean referenceType(Type[] tenv) {
+    return bound.referenceType(boundenv);
   }
 
   /**
-   * Find a canonical version of this type in the given set, using the specified environment to
-   * interpret TGens, and assuming that we have already pushed a certain number of args for this
-   * type on the stack.
+   * Determine if this type, applied to the given a, is a reference type of the form (Ref a) or (Ptr
+   * a). TODO: The a parameter is not currently inspected; we could attempt to check that it is a
+   * valid area type (but kind checking should have done that already) or else look to eliminate it.
    */
-  Type canonType(Type[] env, TypeSet set, int args) {
-    return bound.canonType(boundenv, set, args);
+  boolean referenceType(Type[] tenv, Type a) {
+    return bound.referenceType(boundenv, a.with(tenv));
   }
 
-  Type apply(Type[] thisenv, TVarSubst s) {
-    return bound.apply(boundenv, s);
+  /** Return the alignment of this type (or zero if there is no alignment). */
+  public long alignment(Type[] tenv) {
+    return bound.alignment(boundenv);
+  }
+
+  /**
+   * Worker method for calculating the alignment for a type of the form (this a) (i.e., this,
+   * applied to the argument a). The specified type environment, tenv, is used for both this and a.
+   */
+  long alignment(Type[] tenv, Type a) {
+    return bound.alignment(boundenv, a.with(tenv));
+  }
+
+  /**
+   * Worker method for calculating the alignment for a type of the form (this a b) (i.e., this,
+   * applied to two arguments, a and b). The specified type environment, tenv, is used for this, a,
+   * and b.
+   */
+  long alignment(Type[] tenv, Type a, Type b) {
+    return bound.alignment(boundenv, a.with(tenv), b.with(tenv));
+  }
+
+  boolean nonUnit(Type[] tenv) {
+    return bound.nonUnit(boundenv);
   }
 }

@@ -75,8 +75,24 @@ public class BlockType {
     return rngType();
   }
 
+  /** Return the domain type of this block type. */
+  Type domType() {
+    return dom;
+  }
+
+  /** Return the range type of this block type. */
   Type rngType() {
     return rng;
+  }
+
+  /** Return the arity (number of inputs) for this block type. */
+  int getArity() {
+    return dom.tupleArity(null, 0);
+  }
+
+  /** Return the outity (number of outputs) for this block type. */
+  int getOutity() {
+    return rng.tupleArity(null, 0);
   }
 
   /** Find the list of unbound type variables in this (monomorphic) BlockType. */
@@ -126,9 +142,9 @@ public class BlockType {
     return this.dom.alphaType(left.dom, corresp) && this.rng.alphaType(left.rng, corresp);
   }
 
-  /** Test to see if this block type is polymorphic. */
-  public boolean isQuantified() {
-    return false;
+  /** Test to see if this block type is monomorphic. */
+  public BlockType isMonomorphic() {
+    return this;
   }
 
   /** Determine if two block types can be matched. */
@@ -202,7 +218,7 @@ public class BlockType {
   llvm.FunctionType toLLVM(LLVMMap lm) {
     llvm.Type rt = lm.toLLVM(rng);
     // TODO: eliminate duplicated calls to canonType in line below and in tupleToArray ...
-    llvm.Type[] tys = dom.canonType(lm).tupleToArray(lm, 0);
+    llvm.Type[] tys = dom.canonType(lm).tupleToArray(lm, 0, 0);
     return new llvm.FunctionType(rt, tys);
   }
 }

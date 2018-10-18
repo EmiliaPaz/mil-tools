@@ -43,25 +43,23 @@ public abstract class Top extends Atom {
 
   public abstract String getId();
 
-  boolean isStatic() {
-    return true;
+  /** Return the definition associated with this Top object. */
+  public abstract Defn getDefn();
+
+  /** Apply a TempSubst to this Atom. */
+  public Atom apply(TempSubst s) {
+    return this.clone();
   }
 
-  /**
-   * Update the information that we have recorded about a given formal parameter to reflect the use
-   * of this actual parameter. The input, orig, will be one of: - null, indicating that no previous
-   * information has been found - a specific Const or Top, indicating that this single value was
-   * used in all previous calls - a special value, top, indicating that multiple distinct values
-   * have been encountered in previous calls.
-   */
-  Atom update(Atom orig) {
-    return (orig == null || orig == this) ? this : Atom.top;
+  boolean isStatic() {
+    return true;
   }
 
   Atom isKnown() {
     return this;
   }
 
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     if (type != null) {
       type = type.canonType(set);
@@ -75,15 +73,20 @@ public abstract class Top extends Atom {
 
   public static final Top Unit =
       new TopDef(
-          new TopLevel(BuiltinPosition.position, new TopLhs(), new DataAlloc(Cfun.Unit).withArgs()),
-          0);
+          new TopLevel(BuiltinPosition.pos, new TopLhs(), new DataAlloc(Cfun.Unit).withArgs()), 0);
 
-  abstract Defn getDefn();
-
-  void setDeclared(Handler handler, Position pos, Scheme scheme) {
+  public void setDeclared(Handler handler, Position pos, Scheme scheme) {
     handler.report(
         new Failure(
             pos, "Cannot use type signature; \"" + getId() + "\" is not a top level variable"));
+  }
+
+  /**
+   * Determine whether this item is for a non-Unit, corresponding to a value that requires a
+   * run-time representation in the generated LLVM.
+   */
+  boolean nonUnit() {
+    return type.nonUnit();
   }
 
   public llvm.Value staticValue() {
@@ -92,22 +95,6 @@ public abstract class Top extends Atom {
 
   Type getType() {
     return type;
-  }
-
-  /**
-   * Test to determine whether two Top values refer to the same item. Implemented using double
-   * dispatch.
-   */
-  abstract boolean sameTop(Top that);
-
-  /** Test to determine whether this Top refers to the ith TopLhs in the given TopLevel. */
-  boolean sameTopDef(TopLevel topLevel, int i) {
-    return false;
-  }
-
-  /** Test to determine whether this Top refers to the specified External. */
-  boolean sameTopExt(External external) {
-    return false;
   }
 
   /** Calculate an LLVM Value corresponding to a given MIL argument. */

@@ -21,6 +21,7 @@ package mil;
 import compiler.*;
 import compiler.Position;
 import core.*;
+import java.io.PrintWriter;
 
 /** Represents a single field of a struct type. */
 public class StructField extends Name {
@@ -56,5 +57,31 @@ public class StructField extends Name {
 
   public void debugDump() {
     debug.Log.println(id + " :: " + type + " -- offset=" + offset + ", width=" + width);
+  }
+
+  /** Print a definition for this structure type using (an approximation to) source level syntax. */
+  void dumpTypeDefinition(PrintWriter out) {
+    out.print(id);
+    out.print(" :: ");
+    out.print(type.toString());
+    out.print("  {- offset=" + offset + " -}");
+  }
+
+  /**
+   * Stores a field initializer primitive of type [Init T] >>= [Init S] for this field (of type T)
+   * in a structure (of type S).
+   */
+  private Prim initStructField = null;
+
+  /**
+   * Return the initializer primitive for this field, calculating a definition for the primitive on
+   * the first call.
+   */
+  Prim initStructFieldPrim(StructType st) {
+    if (initStructField == null) {
+      BlockType bt = new BlockType(Type.tuple(Type.init(type)), Type.tuple(Type.init(st.asType())));
+      initStructField = new Prim.initStructField("init_" + id, Prim.PURE, bt, offset);
+    }
+    return initStructField;
   }
 }

@@ -44,20 +44,25 @@ public class Sel extends Tail {
     return true;
   }
 
-  /** Test to see if this Tail expression includes a free occurrence of a particular variable. */
+  /** Test if this Tail expression includes a free occurrence of a particular variable. */
   public boolean contains(Temp w) {
     return a == w;
   }
 
   /**
-   * Test to see if this Tail expression includes an occurrence of any of the variables listed in
-   * the given array.
+   * Test if this Tail expression includes an occurrence of any of the variables listed in the given
+   * array.
    */
   public boolean contains(Temp[] ws) {
     return a.occursIn(ws);
   }
 
-  /** Test to see if two Tail expressions are the same. */
+  /** Add the variables mentioned in this tail to the given list of variables. */
+  public Temps add(Temps vs) {
+    return a.add(vs);
+  }
+
+  /** Test if two Tail expressions are the same. */
   public boolean sameTail(Tail that) {
     return that.sameSel(this);
   }
@@ -72,16 +77,14 @@ public class Sel extends Tail {
   }
 
   /** Display a printable representation of this MIL construct on the specified PrintWriter. */
-  public void dump(PrintWriter out) {
-    out.print(cf + " " + n + " " + a);
+  public void dump(PrintWriter out, Temps ts) {
+    out.print(cf + " " + n + " " + a.toString(ts));
   }
 
-  /** Add the variables mentioned in this tail to the given list of variables. */
-  public Temps add(Temps vs) {
-    return a.add(vs);
-  }
-
-  /** Apply a TempSubst to this Tail. */
+  /**
+   * Apply a TempSubst to this Tail. A call to this method, even if the substitution is empty, will
+   * force the construction of a new Tail.
+   */
   public Tail forceApply(TempSubst s) {
     return new Sel(cf, n, a.apply(s));
   }
@@ -188,17 +191,6 @@ public class Sel extends Tail {
         return new Return(a1);
       }
     }
-    /*
-    // Possible way to rewrite a selector as a memory lookup, except that doing so
-    // disables other optimizations :-(
-    //
-        return Prim.load
-               .withArgs(new Atom[] { new IntConst(32),     // 32 bit pointer
-                                      new IntConst(4*(n+1)),// offset, skipping tag
-                                      a,                    // address of object
-                                      0,                    // no index
-                                      0 });                 // or multiplier
-    */
     return null;
   }
 
@@ -220,6 +212,7 @@ public class Sel extends Tail {
     return this.cf == that.cf && this.n == that.n && this.a.alphaAtom(thisvars, that.a, thatvars);
   }
 
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     a.collect(set);
     if (outputs != null) {
@@ -242,6 +235,7 @@ public class Sel extends Tail {
       }
       return new Return(a);
     }
+    // No point looking for a selector of a singleton type because they do not have any fields.
     return this;
   }
 
@@ -263,7 +257,7 @@ public class Sel extends Tail {
   }
 
   Tail repTransform(RepTypeSet set, RepEnv env) {
-    return cf.repCfun().repTransformSel(set, env, n, a);
+    return cf.repTransformSel(set, env, n, a);
   }
 
   /**
@@ -275,30 +269,35 @@ public class Sel extends Tail {
    * bitdata names or layouts, neither of which require this special treatment.
    */
   Code repTransform(RepTypeSet set, RepEnv env, Temp[] vs, Code c) {
-    return cf.repCfun().repTransformSel(set, env, vs, n, a, c);
+    return cf.repTransformSel(set, env, vs, n, a, c);
   }
 
-  /** Generate LLVM code to execute this Tail with NO result from the right hand side of a Bind. */
-  llvm.Code toLLVMContVoid(LLVMMap lm, VarMap vm, TempSubst s, llvm.Code c) {
+  /**
+   * Generate LLVM code to execute this Tail with NO result from the right hand side of a Bind. Set
+   * isTail to true if the code sequence c is an immediate ret void instruction.
+   */
+  llvm.Code toLLVMBindVoid(LLVMMap lm, VarMap vm, TempSubst s, boolean isTail, llvm.Code c) {
     debug.Internal.error("Sel does not return void");
     return c;
   }
 
   /**
    * Generate LLVM code to execute this Tail and return a result from the right hand side of a Bind.
+   * Set isTail to true if the code sequence c will immediately return the value in the specified
+   * lhs.
    */
-  llvm.Code toLLVMContBind(
-      LLVMMap lm, VarMap vm, TempSubst s, llvm.Local lhs, llvm.Code c) { // cf n a
+  llvm.Code toLLVMBindCont(
+      LLVMMap lm, VarMap vm, TempSubst s, boolean isTail, llvm.Local lhs, llvm.Code c) { // cf n a
     llvm.Type objt = lm.cfunLayoutType(this.cf).ptr();
     llvm.Local base = vm.reg(objt); // register to hold a pointer to a structure for cfun this.cf
-    llvm.Local addr =
-        vm.reg(lhs.getType()); // register to hold pointer to the nth component of this.c
+    llvm.Type at = lhs.getType().ptr();
+    llvm.Local addr = vm.reg(at); // register to hold pointer to the nth component of this.c
     return new llvm.Op(
         base,
         new llvm.Bitcast(a.toLLVMAtom(lm, vm, s), objt),
         new llvm.Op(
             addr,
-            new llvm.Getelementptr(base, llvm.Int.ZERO, new llvm.Int(n + 1)),
+            new llvm.Getelementptr(at, base, llvm.Word.ZERO, new llvm.Word(n + 1)),
             new llvm.Op(lhs, new llvm.Load(addr), c)));
   }
 }

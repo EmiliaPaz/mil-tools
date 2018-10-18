@@ -74,6 +74,19 @@ public class LCParser extends CoreParser implements LCTokens {
           return true;
         }
 
+      case AREA:
+        {
+          Position pos = lexer.getPos();
+          lexer.nextToken(/* AREA */ );
+          AreaVar[] areaVars = areaVars(0);
+          require(COCO);
+          TypeExp areaType = typeExp();
+          TypeExp alignExp = lexer.match(ALIGNED) ? typeExp() : null;
+          prog.add(new AreaDefn(pos, areaVars, areaType, alignExp));
+          lexer.itemEnd("area declaration");
+          return true;
+        }
+
         // TODO: consolidate EXPORT and ENTRYPOINT with similar code in milasm
       case EXPORT:
         {
@@ -104,6 +117,32 @@ public class LCParser extends CoreParser implements LCTokens {
       default:
         return false;
     }
+  }
+
+  /**
+   * Parse a comma separated list of (one or more) area variables. Following the pattern used
+   * elsewhere, the parameter i specifies how many area variables have already been read as part of
+   * this definition so that we can allocate an array of the appropriate size.
+   */
+  private AreaVar[] areaVars(int i) throws Failure {
+    AreaVar areaVar = areaVar();
+    AreaVar[] areaVars = lexer.match(COMMA) ? areaVars(i + 1) : new AreaVar[i + 1];
+    areaVars[i] = areaVar;
+    return areaVars;
+  }
+
+  /**
+   * Read an area variable specification, providing a name and an initializer for a new memory area.
+   */
+  private AreaVar areaVar() throws Failure {
+    if (lexer.getToken() != VARID) {
+      throw missing("area name");
+    }
+    Position pos = lexer.getPos();
+    String id = lexer.getLexeme();
+    lexer.nextToken(/* VARID */ );
+    require(FROM);
+    return new AreaVar(pos, id, parseInfixExpr());
   }
 
   /** Parse a non-empty list of definitions. */
@@ -303,7 +342,7 @@ public class LCParser extends CoreParser implements LCTokens {
             return null;
           } else if (lexer.match(FROM)) {
             LamVar v = e.asLamVar(null);
-            Position pos = e.getPosition();
+            Position pos = e.getPos();
             e = parseTExpr();
             // stmts -> id <- e _ ; stmts
             lexer.itemEnd("generator");
@@ -323,7 +362,7 @@ public class LCParser extends CoreParser implements LCTokens {
     lexer.itemEnd("expression");
     if (lexer.match(SEMI)) {
       Expr s = maybeParseStmts();
-      return (s == null) ? e : new EFrom(e.getPosition(), new FreshVar(), e, s);
+      return (s == null) ? e : new EFrom(e.getPos(), new FreshVar(), e, s);
     }
     return e;
   }
@@ -504,15 +543,25 @@ public class LCParser extends CoreParser implements LCTokens {
 
       case NATLIT:
         {
-          e = new ENat(lexer.getPos(), lexer.getBigNat());
-          lexer.nextToken(/* NATLIT */ );
+          try {
+            e = new ENat(lexer.getPos(), lexer.getWord());
+          } finally {
+            lexer.nextToken(/* NATLIT */ );
+          }
           return e;
         }
 
       case BITLIT:
         {
-          e = new EBit(lexer.getPos(), lexer.getBigNat(), lexer.getNumBits());
+          e = new EBit(lexer.getPos(), lexer.getNat(), lexer.getNumBits());
           lexer.nextToken(/* BITLIT */ );
+          return e;
+        }
+
+      case STRLIT:
+        {
+          e = new EStr(lexer.getPos(), lexer.getLexeme());
+          lexer.nextToken(/* STRLIT */ );
           return e;
         }
 
@@ -647,9 +696,5 @@ public class LCParser extends CoreParser implements LCTokens {
     return lexer.match(FROM)
         ? new InitStructFieldExp(pos, id, parseInfixExpr())
         : super.structField(pos, id);
-  }
-
-  protected AreaVar areaVar(Position pos, String id) throws Failure {
-    return lexer.match(FROM) ? new InitAreaVar(pos, id, parseInfixExpr()) : super.areaVar(pos, id);
   }
 }

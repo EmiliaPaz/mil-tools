@@ -20,7 +20,7 @@ package llvm;
 
 import java.io.PrintWriter;
 
-/** Represents an LLVM function declaration. */
+/** Represents an LLVM function declaration (to allow the use of a function defined elsewhere). */
 public class FuncDecl extends Defn {
 
   /** The name of the function. */
@@ -35,7 +35,25 @@ public class FuncDecl extends Defn {
     this.ftype = ftype;
   }
 
+  /** Print full text for this definition on the specified PrintWriter. */
   void print(PrintWriter out) {
     ftype.printFunDecl(out, name);
+    out.println();
+  }
+
+  /**
+   * Return a boolean to indicate whether there should be any output from this definition in an LLVM
+   * interface description.
+   */
+  boolean includeInInterface() {
+    return true;
+  }
+
+  /**
+   * Print interface text for this definition on the specified PrintWriter, assuming that
+   * this.includeInInterface() == true.
+   */
+  void printInterface(PrintWriter out) {
+    print(out);
   }
 }

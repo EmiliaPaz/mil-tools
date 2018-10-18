@@ -24,24 +24,36 @@ import compiler.Position;
 import core.*;
 
 /** Names for type variables/parameters. */
-public class Tyvar extends TypeName {
+public class Tyvar extends Name {
+
+  private Kind kind;
 
   /** Default constructor. */
   public Tyvar(Position pos, String id, Kind kind) {
-    super(pos, id, kind);
+    super(pos, id);
+    this.kind = kind;
   }
 
   public static final Tyvar[] noTyvars = new Tyvar[0];
 
-  public static final Tyvar arg = new Tyvar(BuiltinPosition.position, "arg", KAtom.STAR);
+  public static final Tyvar arg = new Tyvar(BuiltinPosition.pos, "arg", KAtom.STAR);
 
-  public static final Tyvar res = new Tyvar(BuiltinPosition.position, "", KAtom.STAR);
+  public static final Tyvar res = new Tyvar(BuiltinPosition.pos, "", KAtom.STAR);
 
-  public static final Tyvar star = new Tyvar(BuiltinPosition.position, "", KAtom.STAR);
+  public static final Tyvar star = new Tyvar(BuiltinPosition.pos, "", KAtom.STAR);
 
-  public static final Tyvar tuple = new Tyvar(BuiltinPosition.position, "", KAtom.TUPLE);
+  public static final Tyvar tuple = new Tyvar(BuiltinPosition.pos, "", KAtom.TUPLE);
 
-  public static final Tyvar area = new Tyvar(BuiltinPosition.position, "", KAtom.AREA);
+  public static final Tyvar area = new Tyvar(BuiltinPosition.pos, "", KAtom.AREA);
 
-  public static final Tyvar nat = new Tyvar(BuiltinPosition.position, "", KAtom.NAT);
+  public static final Tyvar nat = new Tyvar(BuiltinPosition.pos, "", KAtom.NAT);
+
+  /** Return the kind of this type constructor. */
+  public Kind getKind() {
+    return kind;
+  }
+
+  public void fixKinds() {
+    kind = kind.fixKind();
+  }
 }

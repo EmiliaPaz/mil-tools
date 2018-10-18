@@ -33,10 +33,6 @@ class EField extends Name {
     this.e = e;
   }
 
-  Position getPosition() {
-    return pos;
-  }
-
   static void display(Screen s, String sep, EField[] fields) {
     s.print("[");
     if (fields != null && fields.length > 0) {
@@ -81,7 +77,6 @@ class EField extends Name {
       throw new Failure(
           pos, "Constructor " + cf + " does not include a field with label \"" + id + "\"");
     }
-    // !System.out.println("Found field \"" + id + "\" at position " + p);
     e.checkType(tis, lfields[p].getType());
     return p;
   }
@@ -95,11 +90,11 @@ class EField extends Name {
     return lfields[p];
   }
 
-  int checkTypeStructInit(TVarsInScope tis, StructName sn, StructField[] sfields) throws Failure {
+  int checkTypeStructInit(TVarsInScope tis, StructType st, StructField[] sfields) throws Failure {
     int p = Name.index(id, sfields);
     if (p < 0) {
       throw new Failure(
-          pos, "Structure " + sn + " does not include a field with label \"" + id + "\"");
+          pos, "Structure " + st + " does not include a field with label \"" + id + "\"");
     }
     e.checkType(tis, Type.init(sfields[p].getType()));
     return p;
@@ -114,6 +109,7 @@ class EField extends Name {
   static Code compInit(
       final CGEnv env,
       final Block abort,
+      final StructType st,
       final EField[] fields,
       final int lo,
       final int hi,
@@ -132,38 +128,41 @@ class EField extends Name {
       // O is the offset for f in S.  But we will need to add abstract syntax for #f types to be
       // able to
       // use this ...
-      return fields[lo].e.compTail(env, abort, kt);
+      return fields[lo].e.compTail(
+          env,
+          abort,
+          new TailCont() {
+            Code with(final Tail init) {
+              Temp i = new Temp();
+              return new Bind(i, init, kt.with(st.initStructFieldPrim(lo).withArgs(i)));
+            }
+          });
     } else {
       final int mid = (lo + hi) / 2;
       return compInit(
           env,
           abort,
+          st,
           fields,
           lo,
           mid,
           new TailCont() {
             Code with(final Tail t1) {
-              final Temp v1 = new Temp();
+              final Temp i1 = new Temp();
               return new Bind(
-                  v1,
+                  i1,
                   t1,
                   compInit(
                       env,
                       abort,
+                      st,
                       fields,
                       mid + 1,
                       hi,
                       new TailCont() {
                         Code with(final Tail t2) {
-                          final Temp v2 = new Temp();
-                          final Temp f = new Temp();
-                          return new Bind(
-                              v2,
-                              t2,
-                              new Bind(
-                                  f,
-                                  new Enter(new TopExt(EStructInit.initSeq), v1),
-                                  kt.with(new Enter(f, v2))));
+                          final Temp i2 = new Temp();
+                          return new Bind(i2, t2, kt.with(Prim.initSeq.withArgs(i1, i2)));
                         }
                       }));
             }

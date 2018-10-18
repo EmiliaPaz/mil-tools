@@ -198,7 +198,6 @@ public final class TVar extends TInd {
       } else if (!t.calcKind(tenv).same(tyvar.getKind())) {
         throw new KindMismatchException(tyvar.getKind(), t, tenv);
       } else {
-        // !System.out.println("binding: " + this + " := " + t.skeleton(tenv));
         bound = t;
         boundenv = tenv;
       }
@@ -277,6 +276,60 @@ public final class TVar extends TInd {
   }
 
   /**
+   * Find the arity of this tuple type (i.e., the number of components) or return (-1) if it is not
+   * a tuple type. Parameter n specifies the number of arguments that have already been found; it
+   * should be 0 for the initial call.
+   */
+  int tupleArity(Type[] tenv, int n) {
+    return (bound == null) ? (-1) : bound.tupleArity(boundenv, n);
+  }
+
+  /**
+   * Generate a printable description for an array of type variables, such as the type variables
+   * that are implicitly bound by a "big lambda" in a polymorphic definition.
+   */
+  public static String show(TVar[] tvs) {
+    StringBuilder buf = new StringBuilder("[");
+    if (tvs != null && tvs.length > 0) {
+      buf.append(tvs[0].toString());
+      for (int i = 1; i < tvs.length; i++) {
+        buf.append(", ");
+        buf.append(tvs[i].toString());
+      }
+    }
+    buf.append("]");
+    return buf.toString();
+  }
+
+  /**
+   * Find the canonical version of this type in the given set, using the specified environment to
+   * interpret TGens, and assuming that we have already pushed a certain number of args for this
+   * type on the stack.
+   */
+  Type canonType(Type[] env, TypeSet set, int args) {
+    return (bound == null) ? set.canonOther(this, args) : bound.canonType(boundenv, set, args);
+  }
+
+  Type apply(Type[] thisenv, TVarSubst s) {
+    return (bound == null) ? s.find(this) : bound.apply(boundenv, s);
+  }
+
+  Type removeTVar() {
+    if (bound == null) {
+      debug.Internal.error("removeTVar: variable has not been bound");
+    } else if (boundenv != null) {
+      debug.Internal.error("removeTVar: non empty environment");
+    }
+    return bound;
+  }
+
+  Type canonArgs(Type[] tenv, TypeSet set, int args) {
+    return (bound == null)
+        ? super.canonArgs(tenv, set, args)
+        : bound.canonArgs(boundenv, set, args);
+  }
+
+  /**
    * Return the natural number type that specifies the BitSize of this type (required to be of kind
    * *) or null if this type has no BitSize (i.e., no bit-level representation). This method should
    * only be used with a limited collection of classes (we only expect to use it with top-level,
@@ -296,25 +349,12 @@ public final class TVar extends TInd {
     return (bound == null) ? null : bound.bitSize(boundenv, a.with(tenv));
   }
 
-  /**
-   * Worker method for calculating the BitSize for a type of the form (this a b) (i.e., this,
-   * applied to two arguments, a and b). The specified type environment, tenv, is used for this, a,
-   * and b.
-   */
-  Type bitSize(Type[] tenv, Type a, Type b) {
-    return (bound == null) ? null : bound.bitSize(boundenv, a.with(tenv), b.with(tenv));
-  }
-
   public Pat bitPat(Type[] tenv) {
     return (bound == null) ? null : bound.bitPat(boundenv);
   }
 
   Pat bitPat(Type[] tenv, Type a) {
     return (bound == null) ? null : bound.bitPat(boundenv, a.with(tenv));
-  }
-
-  Pat bitPat(Type[] tenv, Type a, Type b) {
-    return (bound == null) ? null : bound.bitPat(boundenv, a.with(tenv), b.with(tenv));
   }
 
   /**
@@ -342,50 +382,46 @@ public final class TVar extends TInd {
     return (bound == null) ? null : bound.byteSize(boundenv, a.with(tenv), b.with(tenv));
   }
 
-  Type byteSizeStoredRef(Type[] tenv) {
-    return (bound == null) ? this : bound.byteSizeStoredRef(boundenv);
-  }
-
-  Type byteSizeStoredRef(Type[] tenv, Type a) {
-    return (bound == null) ? null : bound.byteSizeStoredRef(boundenv, a.with(tenv));
-  }
-
-  Type byteSizeStoredRef(Type[] tenv, Type a, Type b) {
-    return (bound == null) ? null : bound.byteSizeStoredRef(boundenv, a.with(tenv), b.with(tenv));
-  }
-
-  public static String show(TVar[] tvs) {
-    StringBuilder buf = new StringBuilder("[");
-    if (tvs != null && tvs.length > 0) {
-      buf.append(tvs[0].toString());
-      for (int i = 1; i < tvs.length; i++) {
-        buf.append(", ");
-        buf.append(tvs[i].toString());
-      }
-    }
-    buf.append("]");
-    return buf.toString();
+  /** Determine if this is a type of the form (Ref a) or (Ptr a) for some area type a. */
+  boolean referenceType(Type[] tenv) {
+    return (bound != null) && bound.referenceType(boundenv);
   }
 
   /**
-   * Find a canonical version of this type in the given set, using the specified environment to
-   * interpret TGens, and assuming that we have already pushed a certain number of args for this
-   * type on the stack.
+   * Determine if this type, applied to the given a, is a reference type of the form (Ref a) or (Ptr
+   * a). TODO: The a parameter is not currently inspected; we could attempt to check that it is a
+   * valid area type (but kind checking should have done that already) or else look to eliminate it.
    */
-  Type canonType(Type[] env, TypeSet set, int args) {
-    return (bound == null) ? set.canonOther(this, args) : bound.canonType(boundenv, set, args);
+  boolean referenceType(Type[] tenv, Type a) {
+    return (bound != null) && bound.referenceType(boundenv, a.with(tenv));
   }
 
-  Type apply(Type[] thisenv, TVarSubst s) {
-    return (bound == null) ? s.find(this) : bound.apply(boundenv, s);
+  /** Return the alignment of this type (or zero if there is no alignment). */
+  public long alignment(Type[] tenv) {
+    return (bound == null) ? 0 : bound.alignment(boundenv);
   }
 
-  Type removeTVar() {
+  /**
+   * Worker method for calculating the alignment for a type of the form (this a) (i.e., this,
+   * applied to the argument a). The specified type environment, tenv, is used for both this and a.
+   */
+  long alignment(Type[] tenv, Type a) {
+    return (bound == null) ? 0 : bound.alignment(boundenv, a.with(tenv));
+  }
+
+  /**
+   * Worker method for calculating the alignment for a type of the form (this a b) (i.e., this,
+   * applied to two arguments, a and b). The specified type environment, tenv, is used for this, a,
+   * and b.
+   */
+  long alignment(Type[] tenv, Type a, Type b) {
+    return (bound == null) ? 0 : bound.alignment(boundenv, a.with(tenv), b.with(tenv));
+  }
+
+  boolean nonUnit(Type[] tenv) {
     if (bound == null) {
-      debug.Internal.error("removeTVar: variable has not been bound");
-    } else if (boundenv != null) {
-      debug.Internal.error("removeTVar: non empty environment");
+      debug.Internal.error("nonUnit for unbound TVar");
     }
-    return bound;
+    return bound.nonUnit(boundenv);
   }
 }

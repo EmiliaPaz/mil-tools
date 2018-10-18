@@ -33,7 +33,7 @@ public class Assert extends Code {
   /** An atom (presumably a variable). */
   private Atom a;
 
-  /** The constructor function that was used to build a. */
+  /** The constructor function used to build a. */
   private Cfun cf;
 
   /** The rest of the code sequence. */
@@ -57,14 +57,18 @@ public class Assert extends Code {
   }
 
   /** Display a printable representation of this MIL construct on the specified PrintWriter. */
-  public void dump(PrintWriter out) {
+  public void dump(PrintWriter out, Temps ts) {
     indent(out);
-    out.println("assert " + a + " " + cf);
-    c.dump(out);
+    out.println("assert " + a.toString(ts) + " " + cf);
+    c.dump(out, ts);
   }
 
-  /** Force the application of a TempSubst to this Code sequence. */
-  public Code forceApply(TempSubst s) { // assert a C; c
+  /**
+   * Force the application of a TempSubst to this Code sequence, forcing construction of a fresh
+   * copy of the input code structure, including the introduction of new temporaries in place of any
+   * variables introduced by Binds.
+   */
+  public Code forceApply(TempSubst s) {
     return new Assert(a.apply(s), cf, c.forceApply(s));
   }
 
@@ -115,6 +119,10 @@ public class Assert extends Code {
     return c.doesntReturn();
   }
 
+  boolean detectLoops(Block src, Blocks visited) {
+    return c.detectLoops(src, visited);
+  }
+
   /**
    * Return a possibly shortened version of this code sequence by applying some simple
    * transformations. The src Block is passed as an argument for use in reporting any optimizations
@@ -127,10 +135,6 @@ public class Assert extends Code {
       return c;
     }
     return this;
-  }
-
-  boolean detectLoops(Block src, Blocks visited) {
-    return c.detectLoops(src, visited);
   }
 
   /**
@@ -237,10 +241,7 @@ public class Assert extends Code {
     c.eliminateDuplicates();
   }
 
-  void collect() {
-    c.collect();
-  }
-
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     if (type != null) {
       type = type.canonAllocType(set);
@@ -274,17 +275,26 @@ public class Assert extends Code {
   }
 
   Code repTransform(RepTypeSet set, RepEnv env) {
-    return cf.repCfun().repTransformAssert(set, a, c.repTransform(set, env));
+    return cf.repTransformAssert(set, a, c.repTransform(set, env));
   }
 
   /** Find the argument variables that are used in this Code sequence. */
-  Temps addArgs() throws Failure { // assert a C; c
+  Temps addArgs() throws Failure {
     return a.add(c.addArgs());
   }
 
   /** Count the number of non-tail calls to blocks in this abstract syntax fragment. */
   void countCalls() {
     c.countCalls();
+  }
+
+  /**
+   * Count the number of calls to blocks, both regular and tail calls, in this abstract syntax
+   * fragment. This is suitable for counting the calls in the main function; unlike countCalls, it
+   * does not skip tail calls at the end of a code sequence.
+   */
+  void countAllCalls() {
+    c.countAllCalls();
   }
 
   /**

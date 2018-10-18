@@ -23,17 +23,18 @@ import core.*;
 import debug.Screen;
 import mil.*;
 
-/** Classes used to provide a representation for expressions. */
+/** A base class for representing the abstract syntax of LC expressions. */
 abstract class Expr {
 
-  abstract Position getPosition();
+  /** Return a source code position for this expression. */
+  abstract Position getPos();
 
   /**
    * Check that this expression is a simple identifier, returning the associated string, or else
    * triggering a ParseFailure.
    */
   String mustBeId() throws ParseFailure {
-    throw new ParseFailure(getPosition(), "Identifier required");
+    throw new ParseFailure(getPos(), "Identifier required");
   }
 
   /**
@@ -42,7 +43,7 @@ abstract class Expr {
    * arguments, given that args of those arguments have already been checked.
    */
   int mustBeLhs(int args) throws Failure {
-    throw new ParseFailure(getPosition(), "invalid syntax for the left hand side of a definition");
+    throw new ParseFailure(getPos(), "invalid syntax for the left hand side of a definition");
   }
 
   /**
@@ -59,16 +60,16 @@ abstract class Expr {
    * The argument is used to specify an existing type signature and should initially be set to null.
    */
   LamVar asLamVar(TypeExp texp) throws Failure {
-    throw new Failure(getPosition(), "Syntax error in variable binding");
+    throw new Failure(getPos(), "Syntax error in variable binding");
   }
 
   public static final String trueName = "True";
 
-  public static final Expr trueCon = new EId(BuiltinPosition.position, trueName);
+  public static final Expr trueCon = new EId(BuiltinPosition.pos, trueName);
 
   public static final String falseName = "False";
 
-  public static final Expr falseCon = new EId(BuiltinPosition.position, falseName);
+  public static final Expr falseCon = new EId(BuiltinPosition.pos, falseName);
 
   /**
    * The abstract syntax for LC does not have an if-then-else construct, so we provide the following
@@ -112,9 +113,9 @@ abstract class Expr {
   }
 
   /**
-   * Perform a scope analysis on this expression, creating a Temp object for each variable binding,
-   * checking that all of the identifiers that it references correspond to bound variables, and
-   * returning the set of free variables in the term.
+   * Perform scope analysis on this expression, creating a Temp for each variable binding, checking
+   * that all of the identifiers it references correspond to bound variables, and returning the set
+   * of free variables in the term.
    */
   abstract DefVars inScopeOf(Handler handler, MILEnv milenv, Env env);
 
@@ -152,7 +153,7 @@ abstract class Expr {
 
   /** Check that this expression will produce a value of the specified type. */
   void checkType(TVarsInScope tis, Type t) throws Failure { // default, used for EVar, ELit, EType
-    inferType(tis).unify(getPosition(), t);
+    inferType(tis).unify(getPos(), t);
   }
 
   abstract Expr lift(LiftEnv lenv);

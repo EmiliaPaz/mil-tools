@@ -26,11 +26,11 @@ import obdd.Pat;
 
 public class TTycon extends TConst {
 
-  private Tycon name;
+  private Tycon tycon;
 
   /** Default constructor. */
-  public TTycon(Tycon name) {
-    this.name = name;
+  public TTycon(Tycon tycon) {
+    this.tycon = tycon;
   }
 
   /**
@@ -46,7 +46,7 @@ public class TTycon extends TConst {
 
   /** Test to determine whether this type is equal to a given TTycon. */
   boolean alphaTTycon(TTycon right) {
-    return this.name == right.name;
+    return this.tycon == right.tycon;
   }
 
   /**
@@ -54,11 +54,11 @@ public class TTycon extends TConst {
    * of arguments.
    */
   void write(TypeWriter tw, int prec, int args) {
-    name.write(tw, prec, args);
+    tycon.write(tw, prec, args);
   }
 
   public int findLevel() throws Failure {
-    return name.findLevel();
+    return tycon.findLevel();
   }
 
   /**
@@ -72,17 +72,17 @@ public class TTycon extends TConst {
 
   /** Test to determine whether this type is equal to a specified type application. */
   boolean sameTAp(Type[] thisenv, TAp tap, Type[] tapenv) {
-    Synonym s = name.isSynonym();
+    Synonym s = tycon.isSynonym();
     return (s != null) && s.getExpansion().sameTAp(null, tap, tapenv);
   }
 
   /** Test to determine whether this type is equal to a specified type constant. */
   boolean sameTTycon(Type[] thisenv, TTycon that) {
-    if (this.name == that.name) {
+    if (this.tycon == that.tycon) {
       return true;
     }
-    Synonym sthis = this.name.isSynonym();
-    Synonym sthat = that.name.isSynonym();
+    Synonym sthis = this.tycon.isSynonym();
+    Synonym sthat = that.tycon.isSynonym();
     if (sthis == null) {
       if (sthat == null) {
         return false; // neither this or that is a synonym
@@ -111,8 +111,7 @@ public class TTycon extends TConst {
 
   /** Test to determine whether this type is equal to a specified type literal. */
   boolean sameTLit(Type[] thisenv, TLit t) {
-    Synonym s = name.isSynonym();
-    return (s != null) && s.getExpansion().sameTLit(null, t);
+    return tycon.sameTLit(t);
   }
 
   /**
@@ -122,7 +121,7 @@ public class TTycon extends TConst {
    * correct.
    */
   Kind calcKind(Type[] thisenv) {
-    return name.getKind();
+    return tycon.getKind();
   }
 
   /**
@@ -143,7 +142,7 @@ public class TTycon extends TConst {
    * we should only instantiate type variables that appear in the type application, tap.
    */
   boolean matchTAp(Type[] thisenv, TAp tap, Type[] tapenv) {
-    Synonym s = name.isSynonym();
+    Synonym s = tycon.isSynonym();
     return (s != null) && s.getExpansion().matchTAp(null, tap, tapenv);
   }
 
@@ -157,7 +156,7 @@ public class TTycon extends TConst {
   }
 
   void unifyTAp(Type[] thisenv, TAp tap, Type[] tapenv) throws UnifyException {
-    Synonym s = name.isSynonym();
+    Synonym s = tycon.isSynonym();
     if (s != null) {
       s.getExpansion().unifyTAp(null, tap, tapenv);
     } else {
@@ -166,9 +165,9 @@ public class TTycon extends TConst {
   }
 
   void unifyTTycon(Type[] thisenv, TTycon that) throws UnifyException {
-    if (this.name != that.name) {
-      Synonym sthis = this.name.isSynonym();
-      Synonym sthat = that.name.isSynonym();
+    if (this.tycon != that.tycon) {
+      Synonym sthis = this.tycon.isSynonym();
+      Synonym sthat = that.tycon.isSynonym();
       if (sthis == null) {
         if (sthat == null) { // Distinct, no expansion ==> error
           throw new TypeMismatchException(that, null, this, thisenv);
@@ -198,7 +197,7 @@ public class TTycon extends TConst {
   }
 
   void unifyTLit(Type[] thisenv, TLit t) throws UnifyException {
-    Synonym s = name.isSynonym();
+    Synonym s = tycon.isSynonym();
     if (s != null) {
       s.getExpansion().unifyTLit(null, t);
     } else {
@@ -214,104 +213,32 @@ public class TTycon extends TConst {
    * (and testing too ...)
    */
   public Type simplifyNatType(Type[] tenv) {
-    Type t = name.simplifyNatType(null);
+    Type t = tycon.simplifyNatType(null);
     return (t != null) ? t : this;
   }
 
+  /**
+   * Find the arity of this tuple type (i.e., the number of components) or return (-1) if it is not
+   * a tuple type. Parameter n specifies the number of arguments that have already been found; it
+   * should be 0 for the initial call.
+   */
+  int tupleArity(Type[] tenv, int n) {
+    return tycon.tupleArity(null, n);
+  }
+
   /** Find the name of the associated bitdata type, if any. */
-  public BitdataName bitdataName() {
-    return name.bitdataName();
+  public BitdataType bitdataType() {
+    return tycon.bitdataType();
   }
 
-  /**
-   * Return the natural number type that specifies the BitSize of this type (required to be of kind
-   * *) or null if this type has no BitSize (i.e., no bit-level representation). This method should
-   * only be used with a limited collection of classes (we only expect to use it with top-level,
-   * monomorphic types), but, just in case, we also provide implementations for classes that we do
-   * not expect to see in practice, and allow for the possibility of a type environment, even though
-   * we expect it will only ever be null.
-   */
-  public Type bitSize(Type[] tenv) {
-    return name.bitSize();
-  }
-
-  /**
-   * Worker method for calculating the BitSize for a type of the form (this a) (i.e., this, applied
-   * to the argument a). The specified type environment, tenv, is used for both this and a.
-   */
-  Type bitSize(Type[] tenv, Type a) {
-    return name.bitSize(tenv, a);
-  }
-
-  /**
-   * Worker method for calculating the BitSize for a type of the form (this a b) (i.e., this,
-   * applied to two arguments, a and b). The specified type environment, tenv, is used for this, a,
-   * and b.
-   */
-  Type bitSize(Type[] tenv, Type a, Type b) {
-    return name.bitSize(tenv, a, b);
-  }
-
-  public Pat bitPat(Type[] tenv) {
-    return name.bitPat();
-  }
-
-  Pat bitPat(Type[] tenv, Type a) {
-    return name.bitPat(tenv, a);
-  }
-
-  Pat bitPat(Type[] tenv, Type a, Type b) {
-    return name.bitPat(tenv, a, b);
-  }
-
-  /**
-   * Find the Bitdata Layout associated with values of this type, if there is one, or else return
-   * null. TODO: perhaps this code should be colocated with bitdataName()?
-   */
+  /** Find the Bitdata Layout associated with values of this type, or else return null. */
   public BitdataLayout bitdataLayout() {
-    return name.bitdataLayout();
+    return tycon.bitdataLayout();
   }
 
   /** Find the name of the associated struct type, if any. */
-  public StructName structName() {
-    return name.structName();
-  }
-
-  /**
-   * Return the natural number type that specifies the ByteSize of this type (required to be of kind
-   * area) or null if this type has no ByteSize (i.e., no memory layout).
-   */
-  public Type byteSize(Type[] tenv) {
-    return name.byteSize();
-  }
-
-  /**
-   * Worker method for calculating the ByteSize for a type of the form (this a) (i.e., this, applied
-   * to the argument a). The specified type environment, tenv, is used for both this and a.
-   */
-  Type byteSize(Type[] tenv, Type a) {
-    return name.byteSize(tenv, a);
-  }
-
-  /**
-   * Worker method for calculating the ByteSize for a type of the form (this a b) (i.e., this,
-   * applied to two arguments, a and b). The specified type environment, tenv, is used for this, a,
-   * and b.
-   */
-  Type byteSize(Type[] tenv, Type a, Type b) {
-    return name.byteSize(tenv, a, b);
-  }
-
-  Type byteSizeStoredRef(Type[] tenv) {
-    return name.byteSizeStoredRef(null);
-  }
-
-  Type byteSizeStoredRef(Type[] tenv, Type a) {
-    return name.byteSizeStoredRef(tenv, a);
-  }
-
-  Type byteSizeStoredRef(Type[] tenv, Type a, Type b) {
-    return name.byteSizeStoredRef(tenv, a, b);
+  public StructType structType() {
+    return tycon.structType();
   }
 
   /**
@@ -324,39 +251,43 @@ public class TTycon extends TConst {
   }
 
   /**
-   * Find a canonical version of this type in the given set, using the specified environment to
+   * Find the canonical version of this type in the given set, using the specified environment to
    * interpret TGens, and assuming that we have already pushed a certain number of args for this
    * type on the stack.
    */
   Type canonType(Type[] env, TypeSet set, int args) {
-    Synonym s = name.isSynonym();
-    return (s != null) ? s.getExpansion().canonType(null, set, args) : set.canon(name, args);
+    return tycon.canonType(env, set, args);
   }
 
-  DataName isDataName() {
-    return name.isDataName();
+  boolean instMatches(Type right) {
+    return right.instMatchesTycon(tycon);
+  }
+
+  boolean instMatchesTycon(Tycon left) {
+    return left == tycon;
+  }
+
+  Type canonArgs(Type[] tenv, TypeSet set, int args) {
+    return tycon.canonArgs(tenv, set, args);
+  }
+
+  DataType dataType() {
+    return tycon.dataType();
   }
 
   /** Return the representation vector for values of this type. */
   Type[] repCalc() {
-    return name.repCalc();
+    return tycon.repCalc();
   }
 
   /**
-   * Determine whether this type constructor is of the form Bit, Ix, or ARef l returning an
-   * appropriate representation vector, or else null if none of these patterns applies. TODO: are
-   * there other types we should be including here?
+   * Return the representation vector for types formed by applying this type to the argument a. This
+   * allows us to provide special representations for types of the form Bit a, Ix a, Ref a, etc. If
+   * none of these apply, we just return null. TODO: are there other types we should be including
+   * here?
    */
-  Type[] bitdataTyconRep(Type a) {
-    return name.bitdataTyconRep(a);
-  }
-
-  /**
-   * Determine whether this type constructor is an ARef, returning either an appropriate
-   * representation vector, or else null.
-   */
-  Type[] bitdataTyconRep2(Type a, Type b) {
-    return name.bitdataTyconRep2(a, b);
+  Type[] repCalc(Type a) {
+    return tycon.repCalc(a);
   }
 
   /**
@@ -365,8 +296,7 @@ public class TTycon extends TConst {
    * [pt] | [r1,...,rm] .
    */
   Tail generatePrim(Position pos, String id) {
-    Synonym s = name.isSynonym();
-    return (s != null) ? s.getExpansion().generatePrim(pos, id) : null;
+    return tycon.generatePrim(pos, id);
   }
 
   /**
@@ -375,8 +305,7 @@ public class TTycon extends TConst {
    * [this].
    */
   Call generatePrimNested(Position pos, String id, Type[] ds) {
-    Synonym s = name.isSynonym();
-    return (s != null) ? s.getExpansion().generatePrimNested(pos, id, ds) : null;
+    return tycon.generatePrimNested(pos, id, ds);
   }
 
   /**
@@ -384,14 +313,12 @@ public class TTycon extends TConst {
    * either the tuple components in an array or null if there is no match.
    */
   Type[] funcFromTuple1() {
-    Synonym s = name.isSynonym();
-    return (s != null) ? s.getExpansion().funcFromTuple1() : null;
+    return tycon.funcFromTuple1();
   }
 
-  /** Test to determine if this type is the MILArrow, ->>, without any arguments. */
+  /** Test to determine if this type is the MIL function arrow, ->>, without any arguments. */
   boolean isMILArrow() {
-    Synonym s = name.isSynonym();
-    return (s != null) ? s.getExpansion().isMILArrow() : name.isMILArrow();
+    return tycon.isMILArrow();
   }
 
   /**
@@ -401,8 +328,7 @@ public class TTycon extends TConst {
    * this argument.
    */
   Type[] tupleComponents(int n) {
-    Synonym s = name.isSynonym();
-    return (s != null) ? s.getExpansion().tupleComponents(n) : name.tupleComponents(n);
+    return tycon.tupleComponents(n);
   }
 
   /**
@@ -414,8 +340,7 @@ public class TTycon extends TConst {
    * b[x,y,z] = t <- f @ [x,y]; t @ [z].
    */
   Block liftToBlock0(Position pos, String id, TopLevel f) {
-    Synonym s = name.isSynonym();
-    return (s != null) ? s.getExpansion().liftToBlock0(pos, id, f) : null;
+    return tycon.liftToBlock0(pos, id, f);
   }
 
   /**
@@ -424,12 +349,104 @@ public class TTycon extends TConst {
    * of a ->> function.
    */
   Code liftToCode0(Block b, Temp[] us, Atom f, Temp[] vs) {
-    Synonym s = name.isSynonym();
-    return (s != null) ? s.getExpansion().liftToCode0(b, us, f, vs) : null;
+    return tycon.liftToCode0(b, us, f, vs);
   }
 
-  boolean useBitdataLo(Type t, Type s) {
-    return name != DataName.aref && name != DataName.aptr;
+  boolean useBitdataLo(Type s) {
+    return tycon != Tycon.ref && tycon != Tycon.ptr;
+  }
+
+  /**
+   * Return the natural number type that specifies the BitSize of this type (required to be of kind
+   * *) or null if this type has no BitSize (i.e., no bit-level representation). This method should
+   * only be used with a limited collection of classes (we only expect to use it with top-level,
+   * monomorphic types), but, just in case, we also provide implementations for classes that we do
+   * not expect to see in practice, and allow for the possibility of a type environment, even though
+   * we expect it will only ever be null.
+   */
+  public Type bitSize(Type[] tenv) {
+    return tycon.bitSize();
+  }
+
+  /**
+   * Worker method for calculating the BitSize for a type of the form (this a) (i.e., this, applied
+   * to the argument a). The specified type environment, tenv, is used for both this and a.
+   */
+  Type bitSize(Type[] tenv, Type a) {
+    return tycon.bitSize(tenv, a);
+  }
+
+  public Pat bitPat(Type[] tenv) {
+    return tycon.bitPat();
+  }
+
+  Pat bitPat(Type[] tenv, Type a) {
+    return tycon.bitPat(tenv, a);
+  }
+
+  /**
+   * Return the natural number type that specifies the ByteSize of this type (required to be of kind
+   * area) or null if this type has no ByteSize (i.e., no memory layout).
+   */
+  public Type byteSize(Type[] tenv) {
+    return tycon.byteSize();
+  }
+
+  /**
+   * Worker method for calculating the ByteSize for a type of the form (this a) (i.e., this, applied
+   * to the argument a). The specified type environment, tenv, is used for both this and a.
+   */
+  Type byteSize(Type[] tenv, Type a) {
+    return tycon.byteSize(tenv, a);
+  }
+
+  /**
+   * Worker method for calculating the ByteSize for a type of the form (this a b) (i.e., this,
+   * applied to two arguments, a and b). The specified type environment, tenv, is used for this, a,
+   * and b.
+   */
+  Type byteSize(Type[] tenv, Type a, Type b) {
+    return tycon.byteSize(tenv, a, b);
+  }
+
+  /** Determine if this is a type of the form (Ref a) or (Ptr a) for some area type a. */
+  boolean referenceType(Type[] tenv) {
+    return tycon.referenceType(null);
+  }
+
+  /**
+   * Determine if this type, applied to the given a, is a reference type of the form (Ref a) or (Ptr
+   * a). TODO: The a parameter is not currently inspected; we could attempt to check that it is a
+   * valid area type (but kind checking should have done that already) or else look to eliminate it.
+   */
+  boolean referenceType(Type[] tenv, Type a) {
+    return tycon.referenceType(tenv, a);
+  }
+
+  /** Return the alignment of this type (or zero if there is no alignment). */
+  public long alignment(Type[] tenv) {
+    return tycon.alignment();
+  }
+
+  /**
+   * Worker method for calculating the alignment for a type of the form (this a) (i.e., this,
+   * applied to the argument a). The specified type environment, tenv, is used for both this and a.
+   */
+  long alignment(Type[] tenv, Type a) {
+    return tycon.alignment(tenv, a);
+  }
+
+  /**
+   * Worker method for calculating the alignment for a type of the form (this a b) (i.e., this,
+   * applied to two arguments, a and b). The specified type environment, tenv, is used for this, a,
+   * and b.
+   */
+  long alignment(Type[] tenv, Type a, Type b) {
+    return tycon.alignment(tenv, a, b);
+  }
+
+  boolean nonUnit(Type[] tenv) {
+    return tycon.nonUnit();
   }
 
   /**
@@ -437,7 +454,7 @@ public class TTycon extends TConst {
    * (canononical) type is passed in for reference as we unwind it on the underlying TypeSet stack.
    */
   llvm.Type toLLVMCalc(Type c, LLVMMap lm, int args) {
-    llvm.Type t = name.toLLVMCalc(c, lm, args);
+    llvm.Type t = tycon.toLLVMCalc(c, lm, args);
     lm.drop(args);
     return t;
   }

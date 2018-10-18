@@ -31,16 +31,19 @@ public abstract class Tail {
     return false;
   }
 
-  /** Test to see if this Tail expression includes a free occurrence of a particular variable. */
+  /** Test if this Tail expression includes a free occurrence of a particular variable. */
   public abstract boolean contains(Temp w);
 
   /**
-   * Test to see if this Tail expression includes an occurrence of any of the variables listed in
-   * the given array.
+   * Test if this Tail expression includes an occurrence of any of the variables listed in the given
+   * array.
    */
   public abstract boolean contains(Temp[] ws);
 
-  /** Test to see if two Tail expressions are the same. */
+  /** Add the variables mentioned in this tail to the given list of variables. */
+  public abstract Temps add(Temps vs);
+
+  /** Test if two Tail expressions are the same. */
   public abstract boolean sameTail(Tail that);
 
   boolean sameSel(Sel that) {
@@ -74,24 +77,21 @@ public abstract class Tail {
   /** Find the dependencies of this AST fragment. */
   public abstract Defns dependencies(Defns ds);
 
-  /** Display a printable representation of this MIL construct on the standard output. */
+  /** Display a printable representation of this object on the standard output. */
   public void dump() {
     PrintWriter out = new PrintWriter(System.out);
-    dump(out);
+    dump(out, null);
     out.flush();
   }
 
   /** Display a printable representation of this MIL construct on the specified PrintWriter. */
-  public abstract void dump(PrintWriter out);
+  public abstract void dump(PrintWriter out, Temps ts);
 
   /** Display a Tail value and then move to the next line. */
-  public void displayln(PrintWriter out) {
-    dump(out);
+  public void displayln(PrintWriter out, Temps ts) {
+    dump(out, ts);
     out.println();
   }
-
-  /** Add the variables mentioned in this tail to the given list of variables. */
-  public abstract Temps add(Temps vs);
 
   /**
    * Apply a TempSubst to this Tail. As an optimization, we skip the operation if the substitution
@@ -101,7 +101,10 @@ public abstract class Tail {
     return (s == null) ? this : forceApply(s);
   }
 
-  /** Apply a TempSubst to this Tail. */
+  /**
+   * Apply a TempSubst to this Tail. A call to this method, even if the substitution is empty, will
+   * force the construction of a new Tail.
+   */
   public abstract Tail forceApply(TempSubst s);
 
   /** Calculate the list of unbound type variables that are referenced in this MIL code fragment. */
@@ -153,6 +156,18 @@ public abstract class Tail {
     return false;
   }
 
+  boolean detectLoops(Block src, Blocks visited) {
+    return false;
+  }
+
+  /**
+   * Return true if this code enters a non-productive black hole (i.e., immediately calls halt or
+   * loop).
+   */
+  boolean blackholes() {
+    return false;
+  }
+
   /**
    * Test whether a given Code/Tail value is an expression of the form return vs, with the specified
    * Temp[] vs as parameter. We also return a true result for a Tail of the form return _, where the
@@ -161,10 +176,6 @@ public abstract class Tail {
    * "void functions" that do not return a useful result.
    */
   boolean isReturn(Temp[] vs) {
-    return false;
-  }
-
-  boolean detectLoops(Block src, Blocks visited) {
     return false;
   }
 
@@ -188,6 +199,10 @@ public abstract class Tail {
    */
   boolean guarded(Block src) {
     return true;
+  }
+
+  boolean noinline() {
+    return false;
   }
 
   /**
@@ -256,10 +271,10 @@ public abstract class Tail {
   }
 
   /**
-   * A simple test for MIL code fragments that return a known FlagConst, returning either the
-   * constant or null.
+   * A simple test for MIL code fragments that return a known Flag, returning either the constant or
+   * null.
    */
-  FlagConst returnsFlagConst() {
+  Flag returnsFlag() {
     return null;
   }
 
@@ -375,10 +390,7 @@ public abstract class Tail {
     /* nothing to do in most cases */
   }
 
-  void collect() {
-    /* nothing to do */
-  }
-
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   abstract void collect(TypeSet set);
 
   /**
@@ -396,9 +408,9 @@ public abstract class Tail {
     return this;
   }
 
+  /** Return a closure k{}, where k{} [x1,...,xn] = this. */
   public Tail constClosure(Position pos, int n) {
-    Temp[] args = Temp.makeTemps(n);
-    return new ClosAlloc(new ClosureDefn(pos, Temp.noTemps, args, this)).withArgs();
+    return new ClosAlloc(new ClosureDefn(pos, Temp.noTemps, Temp.makeTemps(n), this)).withArgs();
   }
 
   abstract Tail repTransform(RepTypeSet set, RepEnv env);
@@ -443,6 +455,15 @@ public abstract class Tail {
   }
 
   /**
+   * Count the number of calls to blocks, both regular and tail calls, in this abstract syntax
+   * fragment. This is suitable for counting the calls in the main function; unlike countCalls, it
+   * does not skip tail calls at the end of a code sequence.
+   */
+  void countAllCalls() {
+    /* default is to do nothing: BlockCalls are the only Tails that contain calls. */
+  }
+
+  /**
    * Search this fragment of MIL code for tail calls, adding new blocks that should be included in
    * the code for a current function to the list bs.
    */
@@ -456,54 +477,89 @@ public abstract class Tail {
   }
 
   /**
-   * Generate LLVM code to evaluate this Tail with a continuation that binds the results to the
-   * variables in vs and then executes the specified code.
+   * Generate LLVM code for a Bind of the form (vs <- this; c). The isTail parameter should only be
+   * true if c is return vs.
    */
-  llvm.Code toLLVMCont(LLVMMap lm, VarMap vm, TempSubst s, Temp[] vs, llvm.Code code) {
-    Type rt = this.resultType(); // Find the type of the values that will be returned
-    if (rt.sameTTycon(null, Type.empty)) { // Tail does not return any results
-      return toLLVMContVoid(lm, vm, s, code); // ... so execute the tail, and then continue
+  llvm.Code toLLVMBind(
+      LLVMMap lm, VarMap vm, TempSubst s, Temp[] vs, boolean isTail, Code c, Label[] succs) {
+    return toLLVMBindTail(lm, vm, s, vs, isTail, c.toLLVMCode(lm, vm, s, succs));
+  }
+
+  /**
+   * Generate LLVM code to evaluate this Tail (which must not be a Return), bind the results to the
+   * variables in vs, and then execute the specified code. The isTail parameter should onlu be true
+   * if the code is an immediate return.
+   */
+  llvm.Code toLLVMBindTail(
+      LLVMMap lm, VarMap vm, TempSubst s, Temp[] vs, boolean isTail, llvm.Code code) {
+    Temp[] nuvs = Temp.nonUnits(vs);
+    if (nuvs.length == 0) { // Tail does not return any results
+      return toLLVMBindVoid(
+          lm, vm, s, isTail, code); // ... so just execute the tail, and then continue
     } else {
-      llvm.Local lhs; // Assuming type correctness, vs.length >= 1
-      if (vs.length == 1) { // Just one result?
-        lhs = vm.lookup(lm, vs[0]); // ... save result directly
+      llvm.Local lhs;
+      if (nuvs.length == 1) { // Just one result?
+        lhs = vm.lookup(lm, nuvs[0]); // ... save result directly
       } else { // Multiple results?
-        lhs = vm.reg(lm.toLLVM(rt)); // ... a register to hold the structure
-        for (int n = vs.length;
+        lhs = vm.reg(lm.toLLVM(resultType())); // ... a register to hold the structure
+        for (int n = nuvs.length;
             --n >= 0; ) { // ... and a sequence of extractvalues to access components
-          code = new llvm.Op(vm.lookup(lm, vs[n]), new llvm.ExtractValue(lhs, n), code);
+          code = new llvm.Op(vm.lookup(lm, nuvs[n]), new llvm.ExtractValue(lhs, n), code);
         }
       }
-      return toLLVMContBind(lm, vm, s, lhs, code); // ... execute tail, capture result, and continue
+      return toLLVMBindCont(
+          lm, vm, s, false, lhs, code); // ... execute tail, capture result, and continue
     }
   }
 
-  /** Generate LLVM code to execute this Tail in tail call position. */
+  /** Generate LLVM code to execute this Tail in tail call position (i.e., as part of a Done). */
   llvm.Code toLLVMDone(LLVMMap lm, VarMap vm, TempSubst s, Label[] succs) {
-    Type rt = this.resultType(); // Find the type of the values that will be returned
-    if (rt.sameTTycon(null, Type.empty)) { // Tail does not return any results
-      return this.toLLVMContVoid(
-          lm,
-          vm,
-          s, // ... so execute the tail
-          new llvm.RetVoid()); // ... and return without a result
-    } else {
-      llvm.Local lhs = vm.reg(lm.toLLVM(rt));
-      return this.toLLVMContBind(
+    llvm.Type ty = lm.toLLVM(resultType()); // Find the type of the values that will be returned
+    if (ty == llvm.Type.vd) { // Tail does not return any results
+      return this.toLLVMBindVoid(
           lm,
           vm,
           s,
+          true, // ... so execute the tail
+          new llvm.RetVoid()); // ... and return without a result
+    } else {
+      llvm.Local lhs = vm.reg(ty);
+      return this.toLLVMBindCont(
+          lm,
+          vm,
+          s,
+          true,
           lhs, // ... execute tail, capture result in lhs
           new llvm.Ret(lhs)); // ... and then return that result
     }
   }
 
-  /** Generate LLVM code to execute this Tail with NO result from the right hand side of a Bind. */
-  abstract llvm.Code toLLVMContVoid(LLVMMap lm, VarMap vm, TempSubst s, llvm.Code c);
+  /**
+   * Generate LLVM code to execute this Tail with NO result from the right hand side of a Bind. Set
+   * isTail to true if the code sequence c is an immediate ret void instruction.
+   */
+  abstract llvm.Code toLLVMBindVoid(
+      LLVMMap lm, VarMap vm, TempSubst s, boolean isTail, llvm.Code c);
 
   /**
    * Generate LLVM code to execute this Tail and return a result from the right hand side of a Bind.
+   * Set isTail to true if the code sequence c will immediately return the value in the specified
+   * lhs.
    */
-  abstract llvm.Code toLLVMContBind(
-      LLVMMap lm, VarMap vm, TempSubst s, llvm.Local lhs, llvm.Code c);
+  abstract llvm.Code toLLVMBindCont(
+      LLVMMap lm, VarMap vm, TempSubst s, boolean isTail, llvm.Local lhs, llvm.Code c);
+
+  /**
+   * Worker function for generateRevInitCode, called when we have established that this tail
+   * expression, for the given TopLevel, should be executed during program initialization.
+   */
+  llvm.Code revInitTail(LLVMMap lm, InitVarMap ivm, TopLevel tl, TopLhs[] lhs, llvm.Code code) {
+    // This is the general case for any form of Tail other than a Return.
+    Temp[] vs = new Temp[lhs.length];
+    for (int i = 0; i < lhs.length; i++) {
+      vs[i] = lhs[i].makeTemp();
+    }
+    code = llvm.Code.reverseOnto(toLLVMBindTail(lm, ivm, null, vs, false, null), code);
+    return tl.initLLVMTopLhs(lm, ivm, vs, code);
+  }
 }

@@ -242,6 +242,11 @@ public class CoreParser extends Phase implements CoreTokens {
     return t;
   }
 
+  /** Parse an atomic type expression, triggering an error if no type expression is found. */
+  protected TypeExp typeAtomExp() {
+    return notMissing(maybeTypeAtomExp());
+  }
+
   /**
    * Try to parse an atomic type expression, returning null if unsuccessful. TODO: document the idea
    * that this method can be overriden to expand the syntax for atomic types.
@@ -264,7 +269,7 @@ public class CoreParser extends Phase implements CoreTokens {
 
       case NATLIT:
         {
-          TypeExp t = new NatTypeExp(lexer.getPos(), lexer.getBigNat());
+          TypeExp t = new NatTypeExp(lexer.getPos(), lexer.getNat());
           lexer.nextToken(/* NATLIT */ );
           return t;
         }
@@ -322,7 +327,7 @@ public class CoreParser extends Phase implements CoreTokens {
    */
   protected TypeExp maybeTypeArrow() {
     if (lexer.getToken() == TO) {
-      TypeExp t = new TyconTypeExp(lexer.getPos(), DataName.arrow);
+      TypeExp t = new TyconTypeExp(lexer.getPos(), DataType.arrow);
       lexer.nextToken(/* -> */ );
       return t;
     }
@@ -380,13 +385,6 @@ public class CoreParser extends Phase implements CoreTokens {
         {
           CoreDefn d = structDefn();
           lexer.itemEnd("struct definition");
-          return d;
-        }
-
-      case AREA:
-        {
-          CoreDefn d = areaDefn();
-          lexer.itemEnd("area definition");
           return d;
         }
 
@@ -601,7 +599,7 @@ public class CoreParser extends Phase implements CoreTokens {
 
       case NATLIT:
         {
-          BitdataRegionExp reg = new BitdataTagbitsExp(lexer.getPos(), lexer.getBigNat(), (-1));
+          BitdataRegionExp reg = new BitdataTagbitsExp(lexer.getPos(), lexer.getNat(), (-1));
           lexer.nextToken(/* NATLIT */ );
           return reg;
         }
@@ -609,7 +607,7 @@ public class CoreParser extends Phase implements CoreTokens {
       case BITLIT:
         {
           BitdataRegionExp reg =
-              new BitdataTagbitsExp(lexer.getPos(), lexer.getBigNat(), lexer.getNumBits());
+              new BitdataTagbitsExp(lexer.getPos(), lexer.getNat(), lexer.getNumBits());
           lexer.nextToken(/* BITLIT */ );
           return reg;
         }
@@ -678,7 +676,8 @@ public class CoreParser extends Phase implements CoreTokens {
     StructRegionExp[] regexps =
         (lexer.getToken() == SCLOSE) ? new StructRegionExp[0] : structRegions(0);
     require(SCLOSE);
-    return new StructDefn(pos, id, sizeExp, regexps);
+    TypeExp alignExp = lexer.match(ALIGNED) ? typeExp() : null;
+    return new StructDefn(pos, id, sizeExp, alignExp, regexps);
   }
 
   /**
@@ -771,52 +770,6 @@ public class CoreParser extends Phase implements CoreTokens {
   }
 
   /**
-   * Parse an area definition, having just found (but not yet skipped) the initial AREA token that
-   * begins the definition.
-   */
-  private AreaDefn areaDefn() throws Failure {
-    Position pos = lexer.getPos();
-    lexer.nextToken(/* AREA */ );
-    AreaVar[] areas = areaVars(0);
-    require(COCO);
-    return new AreaDefn(pos, areas, typeExp());
-  }
-
-  /**
-   * Parse a comma separated list of (one or more) area variables. Following the pattern used
-   * elsewhere, the parameter i specifies how many area variables have already been read as part of
-   * this definition so that we can allocate an array of the appropriate size.
-   */
-  private AreaVar[] areaVars(int i) throws Failure {
-    AreaVar area = areaVar();
-    AreaVar[] areas = lexer.match(COMMA) ? areaVars(i + 1) : new AreaVar[i + 1];
-    areas[i] = area;
-    return areas;
-  }
-
-  /**
-   * Read an area variable specification, providing a name and an optional initializer for a new
-   * memory area.
-   */
-  private AreaVar areaVar() throws Failure {
-    if (lexer.getToken() != VARID) {
-      throw missing("area name");
-    }
-    Position pos = lexer.getPos();
-    String id = lexer.getLexeme();
-    lexer.nextToken(/* VARID */ );
-    return areaVar(pos, id);
-  }
-
-  /**
-   * Create an AreaVar with given position and identifier. Can be overridden in subclasses to parse
-   * an additional initializer expression.
-   */
-  protected AreaVar areaVar(Position pos, String id) throws Failure {
-    return new AreaVar(pos, id);
-  }
-
-  /**
    * Parse a type synonym or primitive type definition, having just found (but not yet skipped) the
    * initial TYPE keyword that begins the definition. The syntax for a type synonym definition is as
    * follows:
@@ -847,8 +800,11 @@ public class CoreParser extends Phase implements CoreTokens {
     }
     int arity = Integer.MAX_VALUE; // Advisory, not required
     if (lexer.getToken() == NATLIT) {
-      arity = lexer.getSmallNat();
-      lexer.nextToken(/* NATLIT */ );
+      try {
+        arity = lexer.getInt();
+      } finally {
+        lexer.nextToken(/* NATLIT */ );
+      }
     }
     KindExp kexp;
     if (!lexer.match(COCO) || (kexp = maybeKindExp()) == null) {

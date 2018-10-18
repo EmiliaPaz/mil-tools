@@ -21,6 +21,8 @@ package mil;
 import compiler.*;
 import compiler.Position;
 import core.*;
+import java.io.PrintWriter;
+import java.math.BigInteger;
 
 /** Represents a single field of a particular bitdata type that can be accessed using its name. */
 public class BitdataField extends Name {
@@ -58,6 +60,18 @@ public class BitdataField extends Name {
     debug.Log.println(id + " :: " + type + " -- offset=" + offset + ", width=" + width);
   }
 
+  int dumpBitdataField(PrintWriter out, BigInteger tagbits, int lastOffset) {
+    int end = offset + width; // bit position where this field ends
+    if (lastOffset > end) { // display any leading tagbits
+      out.print(Bits.toString(tagbits.shiftRight(end), lastOffset - end));
+      out.print(" | ");
+    }
+    out.print(id);
+    out.print(" :: ");
+    out.print(type.toString());
+    return offset;
+  }
+
   Tail repTransformSel(RepTypeSet set, RepEnv env, Atom a) {
     return new BlockCall(selectorBlock, a.repAtom(set, env));
   }
@@ -78,55 +92,60 @@ public class BitdataField extends Name {
   /**
    * Generate code for a selector for this field, given total size of the enclosing bitdata type.
    */
-  void generateSelector(Cfun cf, BitdataLayout layout) {
-    int total = layout.getWidth(); // number of bits in output
+  void generateSelector(BitdataLayout layout) {
+    selectorBlock = generateBitSelector(pos, type.useBitdataLo(), offset, width, layout.getWidth());
+  }
+
+  static Block generateBitSelector(Position pos, boolean useLo, int offset, int width, int total) {
     Temp[] params;
     Code code;
     if (width == 0) {
-      params = Temp.makeTemps(total == 0 ? 1 : Type.numWords(total));
+      params = Temp.makeTemps(total == 0 ? 1 : Word.numWords(total));
       code = new Done(new DataAlloc(Cfun.Unit).withArgs());
     } else {
-      params = Temp.makeTemps(Type.numWords(total)); // input parameters
-      Temp[] ws = Temp.makeTemps(Type.numWords(width)); // output parameters
+      params = Temp.makeTemps(Word.numWords(total)); // input parameters
+      Temp[] ws = Temp.makeTemps(Word.numWords(width)); // output parameters
       code = new Done(new Return(Temp.clone(ws))); // final return
       code =
           width == 1
-              ? selectorBit(total, params, ws, code)
-              : type.useBitdataLo()
-                  ? selectorLo(total, params, ws, code)
-                  : selectorHi(total, params, ws, code);
+              ? selectorBit(offset, total, params, ws, code)
+              : useLo
+                  ? selectorLo(offset, width, total, params, ws, code)
+                  : selectorHi(offset, width, total, params, ws, code);
     }
-    selectorBlock = new Block(pos, "select_" + id, params, code); // create the new block
+    return new Block(pos, params, code); // create the new block
   }
 
   /**
    * Generate selector code for a bitdata field that contains only one bit; result should be of type
    * Flag.
    */
-  private Code selectorBit(int total, Temp[] params, Temp[] ws, Code code) {
+  private static Code selectorBit(int offset, int total, Temp[] params, Temp[] ws, Code code) {
     if (total == 1) { // special case if whole object is just a single bit
       return copy(ws, 0, params[0], code);
     } else {
-      int j = offset / Type.WORDSIZE; // number of word containing the bit we're interested in
-      int o = offset % Type.WORDSIZE; // offset of the bit we're interested in ...
+      int wordsize = Word.size();
+      int j = offset / wordsize; // number of word containing the bit we're interested in
+      int o = offset % wordsize; // offset of the bit we're interested in ...
       Temp a = new Temp();
       return new Bind(
           a,
-          Prim.and.withArgs(params[j], 1 << o),
-          new Bind(ws[0], Prim.neq.withArgs(a, IntConst.Zero), code));
+          Prim.and.withArgs(params[j], 1L << o),
+          new Bind(ws[0], Prim.neq.withArgs(a, Word.Zero), code));
     }
   }
 
   /** Generate selector code for a bitdata field whose type uses the lo bits representation. */
-  private Code selectorLo(int total, Temp[] params, Temp[] ws, Code code) {
-    int wordsize = Type.WORDSIZE;
+  private static Code selectorLo(
+      int offset, int width, int total, Temp[] params, Temp[] ws, Code code) {
+    int wordsize = Word.size();
     int n = ws.length; // number of words in output
     int w = n * wordsize - width; // unused bits in most sig output word
     int o = offset % wordsize; // offset within each word
     int j = offset / wordsize; // starting word offset in params
 
     if (width + offset < total && 0 < w) { // add mask on msw, if needed
-      code = prim(ws, n - 1, Prim.and, new IntConst((1 << (wordsize - w)) - 1), code);
+      code = prim(ws, n - 1, Prim.and, new Word((1L << (wordsize - w)) - 1), code);
     }
 
     for (int i = n - 1; i >= 0; i--) { // extract each word of the result
@@ -154,15 +173,16 @@ public class BitdataField extends Name {
   }
 
   /** Generate selector code for a bitdata field whose type uses the hi bits representation. */
-  private Code selectorHi(int total, Temp[] params, Temp[] ws, Code code) {
-    int wordsize = Type.WORDSIZE;
+  private static Code selectorHi(
+      int offset, int width, int total, Temp[] params, Temp[] ws, Code code) {
+    int wordsize = Word.size();
     int n = ws.length; // number of words in output
     int w = n * wordsize - width; // unused bits in least sig word
     int o = (wordsize - (width + offset) % wordsize) % wordsize; // offset to msb in input
     int j = (width + offset - 1) / wordsize - (n - 1); // offset from output to input
 
     if (0 < w) { // add mask on lsw, if needed
-      code = prim(ws, 0, Prim.and, new IntConst((~0) << w), code);
+      code = prim(ws, 0, Prim.and, new Word((~0) << w), code);
     }
 
     for (int i = n - 1; i >= 0; i--) { // extract each word of the result
@@ -199,13 +219,13 @@ public class BitdataField extends Name {
    * Generate code for an update operator for this field, given total size of the enclosing bitdata
    * type.
    */
-  public void generateUpdate(Cfun cf, BitdataLayout layout) {
+  public void generateUpdate(BitdataLayout layout) {
     int total = layout.getWidth(); // number of bits in output
     Block impl;
     if (total == 0) { // If total==0, then any fields must also have zero width
       impl = new Block(pos, Temp.makeTemps(2), new Done(Cfun.Unit.withArgs()));
     } else { // General case, total>0
-      int n = Type.numWords(total); // number of words in output
+      int n = Word.numWords(total); // number of words in output
       Temp[] ws = Temp.makeTemps(n); // arguments to hold full bitdata value
       Temp[] args; // arguments to hold new field value
       Code code;
@@ -213,7 +233,7 @@ public class BitdataField extends Name {
         args = Temp.makeTemps(1);
         code = new Done(new Return(ws));
       } else { // If width>0, do the proper logic to update the field
-        args = Temp.makeTemps(Type.numWords(width));
+        args = Temp.makeTemps(Word.numWords(width));
         code =
             genMaskField(
                 total,
@@ -224,7 +244,7 @@ public class BitdataField extends Name {
     }
     Type lt = layout.asType();
     BlockType bt = new BlockType(Type.tuple(lt, getType()), Type.tuple(lt));
-    updatePrim = new BlockPrim("update_" + id, 2, 1, Prim.PURE, bt, impl);
+    updatePrim = new Prim.blockImpl("update_" + id, Prim.PURE, bt, impl);
   }
 
   /**
@@ -249,8 +269,9 @@ public class BitdataField extends Name {
     if (total == 1) { // special case if whole object is just a single bit
       return copy(ws, 0, as[0], code);
     } else {
-      int j = offset / Type.WORDSIZE; // number of word containing the bit we're interested in
-      int o = offset % Type.WORDSIZE; // offset of the bit we're interested in ...
+      int wordsize = Word.size();
+      int j = offset / wordsize; // number of word containing the bit we're interested in
+      int o = offset % wordsize; // offset of the bit we're interested in ...
       Temp a = new Temp();
       Temp b = new Temp();
       return new Bind(
@@ -266,7 +287,7 @@ public class BitdataField extends Name {
    */
   static Code genUpdateZeroedFieldLo(
       int offset, int width, int total, Temp[] ws, Temp[] as, Code code) {
-    int wordsize = Type.WORDSIZE;
+    int wordsize = Word.size();
     int n = as.length; // number of words for field
     int w = n * wordsize - width; // unused bits in last word
     int o = offset % wordsize;
@@ -308,7 +329,7 @@ public class BitdataField extends Name {
    */
   static Code genUpdateZeroedFieldHi(
       int offset, int width, int total, Temp[] ws, Temp[] as, Code code) {
-    int wordsize = Type.WORDSIZE;
+    int wordsize = Word.size();
     int n = as.length; // number of words for field
     int w = n * wordsize - width; // unused bits in last word
     int e = offset + width; // offset to msb after field
@@ -316,7 +337,6 @@ public class BitdataField extends Name {
     int j = (e - 1) / wordsize - (n - 1); // offset from output to input
 
     for (int i = 0; i < n; i++) {
-      // !System.out.println("i="+i+", n="+n+", w="+w+", e="+e+", o="+o+", j="+j);
       if (o == 0) {
         code =
             (i > 0 || w == 0)
@@ -350,46 +370,39 @@ public class BitdataField extends Name {
    */
   Code genMaskField(int total, Temp[] ws, Code code) {
     if (width > 0) {
-      int o = offset % Type.WORDSIZE; // offset to lowest bit of field within lowest word
-      int j = offset / Type.WORDSIZE; // index of lowest word of ws containing field bits
+      int wordsize = Word.size();
+      int o = offset % wordsize; // offset to lowest bit of field within lowest word
+      int j = offset / wordsize; // index of lowest word of ws containing field bits
       int e = offset + width; // index of high bit after field
-      int p = e % Type.WORDSIZE; // offset to highest bit of field within highest word
-      int k = (e - 1) / Type.WORDSIZE; // index of highest word of ws containing field bits
+      int p = e % wordsize; // offset to highest bit of field within highest word
+      int k = (e - 1) / wordsize; // index of highest word of ws containing field bits
 
-      int lomask = (o == 0) ? 0 : ((1 << o) - 1); // mask to preserve low bits
-      int himask = (p == 0) ? 0 : ((-1) << p); // mask to preserve high bits
-      int q = total - k * Type.WORDSIZE;
-      if (q < Type.WORDSIZE) {
-        himask &= (1 << q) - 1;
+      long lomask = (o == 0) ? 0 : ((1L << o) - 1); // mask to preserve low bits
+      long himask = (p == 0) ? 0 : ((-1L) << p); // mask to preserve high bits
+      int q = total - k * wordsize;
+      if (q < wordsize) {
+        himask &= (1L << q) - 1;
       }
-      // !System.out.println("field " + id + ", j=" + j + ", o=" + o + ", e=" + e +
-      // !                   ", k=" + k + ", p=" + p + ", q=" + q +
-      // !                   ", lomask=0x" + Integer.toHexString(lomask) +
-      // !                   ", himask=0x" + Integer.toHexString(himask));
 
       if (j == k) {
-        // !System.out.println("hi and lo mask words coincide");
-        // !System.out.println("combined mask is 0x" + Integer.toHexString(lomask | himask));
-        code = prim(ws, j, Prim.and, new IntConst(lomask | himask), code);
+        code = prim(ws, j, Prim.and, new Word(lomask | himask), code);
       } else {
         if (o != 0) {
-          // !System.out.println("lo mask for word " + j + " is 0x" + Integer.toHexString(lomask));
-          code = prim(ws, j, Prim.and, new IntConst(lomask), code);
+          code = prim(ws, j, Prim.and, new Word(lomask), code);
         }
         for (int i = j + 1; i < k; i++) {
-          code = copy(ws, i, IntConst.Zero, code);
+          code = copy(ws, i, Word.Zero, code);
         }
         if (p != 0) {
-          // !System.out.println("hi mask for word " + k + " is 0x" + Integer.toHexString(himask));
-          code = prim(ws, k, Prim.and, new IntConst(himask), code);
+          code = prim(ws, k, Prim.and, new Word(himask), code);
         }
       }
     }
     return code;
   }
 
-  void calculateBitdataBlocks(Cfun cf, BitdataLayout layout) {
-    generateSelector(cf, layout);
-    generateUpdate(cf, layout);
+  void calculateBitdataBlocks(BitdataLayout layout) {
+    generateSelector(layout);
+    generateUpdate(layout);
   }
 }

@@ -65,7 +65,7 @@ class PrimDefnExp extends DefnExp {
    */
   void addTo(MILEnv milenv) throws Failure {
     BlockType bt = BlockType.validate(milenv.getTyconEnv(), domtuple, rngtuple);
-    prim = new Prim(id, domtuple.width(), rngtuple.width(), purity, bt);
+    prim = new Prim(id, purity, bt);
     debug.Log.println("primitive " + id + " :: " + bt);
     if (milenv.addPrim(prim) != null) {
       MILEnv.multipleDefns(pos, "primitive", id);
@@ -86,6 +86,10 @@ class PrimDefnExp extends DefnExp {
     /* nothing to do here */
   }
 
+  /**
+   * Add the MIL definition associated with this DefnExp, if any, as an entrypoint to the specified
+   * program.
+   */
   void addAsEntryTo(MILProgram mil) {
     if (t != null) mil.addEntry(t);
   }

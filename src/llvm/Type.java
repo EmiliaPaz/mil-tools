@@ -49,16 +49,44 @@ public abstract class Type {
   }
 
   /** Represents the void type. TODO: eliminate this! */
-  public static final Type vd = new Basic("void", Int.ONES);
+  public static final Type vd = new Basic("void", Word.ONES);
 
   /** Represents the type of Boolean values. */
   public static final Type i1 = new Basic("i1", Bool.FALSE);
 
   /** Represents the type of 8 bit signed integer values. */
-  public static final Type i8 = new Basic("i8", Int.ONES);
+  public static final Type i8 = new Basic("i8", Word.ZERO);
+
+  /** Represents the type of 16 bit signed integer values. */
+  public static final Type i16 = new Basic("i16", Word.ZERO);
 
   /** Represents the type of 32 bit signed integer values. */
-  public static final Type i32 = new Basic("i32", Int.ZERO);
+  public static final Type i32 = new Basic("i32", Word.ZERO);
+
+  /** Represents the type of 64 bit signed integer values. */
+  public static final Type i64 = new Basic("i64", Word.ZERO);
+
+  /**
+   * Holds the LLVM type corresponding to the MIL Word type. Should obviously be set to a non-null
+   * value before use, and should be fixed throughout any given LLVM program.
+   */
+  private static Type word;
+
+  /** Return the LLVM type corresponding to the MIL Word type. */
+  public static Type word() {
+    return word;
+  }
+
+  /** Set the LLVM type for Word using the given size value (which must be either 32 or 64). */
+  public static void setWord(int size) {
+    if (size == 32) {
+      word = i32;
+    } else if (size == 64) {
+      word = i64;
+    } else {
+      debug.Internal.error("Invalid LLVM wordsize " + size);
+    }
+  }
 
   /** Get the type of the ith component in this (assumed) structure type. */
   public Type at(int i) {

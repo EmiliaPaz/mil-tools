@@ -27,17 +27,17 @@ import java.io.PrintWriter;
 public abstract class PrimBinOp extends Prim {
 
   /** Default constructor. */
-  public PrimBinOp(String id, int arity, int outity, int purity, BlockType blockType) {
-    super(id, arity, outity, purity, blockType);
+  public PrimBinOp(String id, int purity, BlockType blockType) {
+    super(id, purity, blockType);
   }
 
-  abstract int op(int n, int m);
+  abstract long op(long n, long m);
 
   void exec(PrintWriter out, int fp, Value[] stack) throws Failure {
-    stack[fp] = new IntValue(op(stack[fp].getInt(), stack[fp + 1].getInt()));
+    stack[fp] = new WordValue(op(stack[fp].getInt(), stack[fp + 1].getInt()));
   }
 
-  Code fold(int n, int m) {
+  Code fold(long n, long m) {
     MILProgram.report("constant folding for " + getId());
     return PrimCall.done(op(n, m));
   }
@@ -47,7 +47,8 @@ public abstract class PrimBinOp extends Prim {
    * is not expected to produce any results, but execution is expected to continue with the given
    * code.
    */
-  llvm.Code toLLVMPrimVoid(LLVMMap lm, VarMap vm, TempSubst s, Atom[] args, llvm.Code c) {
+  llvm.Code toLLVMPrimVoid(
+      LLVMMap lm, VarMap vm, TempSubst s, Atom[] args, boolean isTail, llvm.Code c) {
     debug.Internal.error(id + " is not a void primitive");
     return c;
   }
@@ -58,10 +59,16 @@ public abstract class PrimBinOp extends Prim {
    * execution is expected to continue on to the specified code, c.
    */
   llvm.Code toLLVMPrimCont(
-      LLVMMap lm, VarMap vm, TempSubst s, Atom[] args, llvm.Local lhs, llvm.Code c) {
+      LLVMMap lm,
+      VarMap vm,
+      TempSubst s,
+      Atom[] args,
+      boolean isTail,
+      llvm.Local lhs,
+      llvm.Code c) {
     return new llvm.Op(
         lhs,
-        this.op(llvm.Type.i32, args[0].toLLVMAtom(lm, vm, s), args[1].toLLVMAtom(lm, vm, s)),
+        this.op(llvm.Type.word(), args[0].toLLVMAtom(lm, vm, s), args[1].toLLVMAtom(lm, vm, s)),
         c);
   }
 

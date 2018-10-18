@@ -22,28 +22,30 @@ import compiler.*;
 import compiler.Failure;
 import compiler.Position;
 import core.*;
+import java.io.PrintWriter;
 import java.math.BigInteger;
 import obdd.Pat;
 
 /** Names for type constants, each of which has an associated kind. */
-public abstract class Tycon extends TypeName {
+public abstract class Tycon extends Name {
 
   /** Default constructor. */
-  public Tycon(Position pos, String id, Kind kind) {
-    super(pos, id, kind);
+  public Tycon(Position pos, String id) {
+    super(pos, id);
   }
 
-  public int getArity() {
-    // TODO: this is a bogus definition; these arity values are only used to provide (hopefully)
-    // friendlier error messages when a tycon is applied to the wrong number of arguments ...
-    // maybe the getArity() method should be replaced with something that more directly supports
-    // that test.  Or perhaps we can find a different way to get a better error message ...
-    return Integer.MAX_VALUE;
+  /** Return the kind of this type constructor. */
+  public abstract Kind getKind();
+
+  /** Return the arity of this type constructor. */
+  public abstract int getArity();
+
+  public Synonym isSynonym() {
+    return null;
   }
 
   public void fixKinds() {
-    super.fixKinds();
-    debug.Log.println(id + " :: " + kind);
+    /* Nothing to do here */
   }
 
   private TTycon type = new TTycon(this);
@@ -97,12 +99,12 @@ public abstract class Tycon extends TypeName {
     tw.close(prec >= TypeWriter.ALWAYS);
   }
 
-  public Synonym isSynonym() {
-    return null;
-  }
-
   public int findLevel() throws Failure {
     return 0;
+  }
+
+  boolean sameTLit(TLit t) {
+    return false;
   }
 
   /**
@@ -116,152 +118,97 @@ public abstract class Tycon extends TypeName {
     return null;
   }
 
+  public static final String milArrowId = "->>";
+
+  public static final Tycon milArrow =
+      new PrimTycon(milArrowId, new KFun(KAtom.TUPLE, new KFun(KAtom.TUPLE, KAtom.STAR)), 2);
+
+  public static final DataType arrow = new DataType("->", Kind.simple(2), 2);
+
+  /**
+   * Find the arity of this tuple type (i.e., the number of components) or return (-1) if it is not
+   * a tuple type. Parameter n specifies the number of arguments that have already been found; it
+   * should be 0 for the initial call.
+   */
+  int tupleArity(Type[] tenv, int n) {
+    return (-1);
+  }
+
+  public static final DataType proc = new DataType("Proc", Kind.simple(1), 1);
+
+  public static final DataType unit = new DataType("Unit", KAtom.STAR, 0);
+
+  public static final Kind natToStar = new KFun(KAtom.NAT, KAtom.STAR);
+
+  public static final Kind areaToStar = new KFun(KAtom.AREA, KAtom.STAR);
+
+  public static final Kind starToArea = new KFun(KAtom.STAR, KAtom.AREA);
+
+  public static final Kind natToAreaToStar = new KFun(KAtom.NAT, areaToStar);
+
+  public static final Kind areaToArea = new KFun(KAtom.AREA, KAtom.AREA);
+
+  public static final Kind natToAreaToArea = new KFun(KAtom.NAT, areaToArea);
+
+  public static final Tycon word = new PrimTycon("Word", Kind.simple(0), 0);
+
+  public static final Tycon nzword = new PrimTycon("NZWord", Kind.simple(0), 0);
+
+  public static final Tycon addr = new PrimTycon("Addr", Kind.simple(0), 0);
+
+  public static final Tycon flag = new PrimTycon("Flag", Kind.simple(0), 0);
+
+  public static final Tycon bit = new PrimTycon("Bit", natToStar, 1);
+
+  public static final Tycon nzbit = new PrimTycon("NZBit", natToStar, 1);
+
+  public static final Tycon ix = new PrimTycon("Ix", natToStar, 1);
+
+  public static final Tycon pad = new PrimTycon("Pad", natToAreaToArea, 2);
+
+  public static final Tycon array = new PrimTycon("Array", natToAreaToArea, 2);
+
+  public static final Tycon ref = new PrimTycon("Ref", areaToStar, 1);
+
+  public static final Tycon ptr = new PrimTycon("Ptr", areaToStar, 1);
+
+  public static final Tycon init = new PrimTycon("Init", areaToStar, 1);
+
+  public static final Tycon stored = new PrimTycon("Stored", starToArea, 1);
+
+  public static final Tycon string = new PrimTycon("String", KAtom.AREA, 0);
+
   /** Find the name of the associated bitdata type, if any. */
-  public BitdataName bitdataName() {
+  public BitdataType bitdataType() {
     return null;
   }
 
-  /**
-   * Worker method for calculating the BitSize for a type of the form (this a) (i.e., this, applied
-   * to the argument a). The specified type environment, tenv, is used for both this and a.
-   */
-  Type bitSize(Type[] tenv, Type a) {
-    if (this == DataName.bit
-        || this == DataName.nzbit) { // BitSize(Bit n) ==>  n,  same for (NZBit n)
-      return a.simplifyNatType(tenv);
-    } else if (this == DataName.ix) { // BitSize(Ix n)  ==>  (calculation below)
-      BigInteger n = a.ixBound(tenv);
-      if (n.signum() <= 0) {
-        return new TNat(BigInteger.ZERO);
-      }
-      int w = n.bitLength();
-      if (w < 0 || w >= Type.WORDSIZE) {
-        return null;
-      }
-      return new TNat(BigInteger.valueOf(w));
-    }
-    return null;
-  }
-
-  /**
-   * Worker method for calculating the BitSize for a type of the form (this a b) (i.e., this,
-   * applied to two arguments, a and b). The specified type environment, tenv, is used for this, a,
-   * and b.
-   */
-  Type bitSize(Type[] tenv, Type a, Type b) {
-    if (this == DataName.aref
-        || this == DataName.aptr) { // BitSize(ARef (2^(WORDSIZE-w)) a) = w (if 0<=w<=WORDSIZE)
-      int w = a.arefWidth(tenv); // (same calculation for aptr)
-      return (w > 0) ? new TNat(BigInteger.valueOf(w)) : null;
-    }
-    return null;
-  }
-
-  /** Return the nat that specifies the bit size of the type produced by this type constructor. */
-  public Type bitSize() {
-    return null;
-  }
-
-  /** Return the bit pattern for the values of this type. */
-  public Pat bitPat() {
-    return null;
-  }
-
-  Pat bitPat(Type[] tenv, Type a) {
-    if (this == DataName.bit) {
-      return obdd.Pat.all(a.bitWidth(tenv));
-    } else if (this == DataName.nzbit) {
-      int w = a.bitWidth(tenv);
-      return (w > 0) ? obdd.Pat.nonzero(w) : null;
-    } else if (this == DataName.ix) {
-      BigInteger n = a.ixBound(tenv);
-      if (n.signum() <= 0) {
-        return obdd.Pat.empty(0);
-      }
-      int w = n.bitLength();
-      if (w < 0 || w >= Type.WORDSIZE) {
-        // TODO: generate an internal error?  or make above internals return null instead?
-        return null;
-      }
-      return obdd.Pat.lessEq(w, n.intValue());
-    }
-    return null;
-  }
-
-  Pat bitPat(Type[] tenv, Type a, Type b) {
-    if (this == DataName.aref) {
-      int w = a.arefWidth(tenv);
-      return (w > 0) ? obdd.Pat.nonzero(w) : null;
-    } else if (this == DataName.aptr) {
-      int w = a.arefWidth(tenv);
-      return (w > 0) ? obdd.Pat.all(w) : null;
-    }
-    return null;
-  }
-
-  /**
-   * Find the Bitdata Layout associated with values of this type, if there is one, or else return
-   * null. TODO: perhaps this code should be colocated with bitdataName()?
-   */
+  /** Find the Bitdata Layout associated with values of this type, or else return null. */
   public BitdataLayout bitdataLayout() {
     return null;
   }
 
   /** Find the name of the associated struct type, if any. */
-  public StructName structName() {
-    return null;
-  }
-
-  /** Return the nat that specifies the byte size of the type produced by this type constructor. */
-  public Type byteSize() {
+  public StructType structType() {
     return null;
   }
 
   /**
-   * Worker method for calculating the ByteSize for a type of the form (this a) (i.e., this, applied
-   * to the argument a). The specified type environment, tenv, is used for both this and a.
+   * Print a definition for this type constructor using source level syntax. TODO: Find a more
+   * appropriate place for this code ...
    */
-  Type byteSize(Type[] tenv, Type a) {
-    return (this == DataName.stored) ? a.byteSizeStored(tenv) : null;
-  }
+  abstract void dumpTypeDefinition(PrintWriter out);
 
   /**
-   * Worker method for calculating the ByteSize for a type of the form (this a b) (i.e., this,
-   * applied to two arguments, a and b). The specified type environment, tenv, is used for this, a,
-   * and b.
+   * Find the canonical version of this type in the given set, using the specified environment to
+   * interpret TGens, and assuming that we have already pushed a certain number of args for this
+   * type on the stack.
    */
-  Type byteSize(Type[] tenv, Type a, Type b) {
-    if (this == DataName.array || this == DataName.pad) {
-      // ByteSize (Array a b) = a * ByteSize b
-      // ByteSize (Pad   a b) = a * ByteSize b
-      BigInteger n = a.simplifyNatType(tenv).getNat();
-      if (n != null) {
-        Type s = b.byteSize(tenv);
-        if (s != null) {
-          BigInteger m = s.simplifyNatType(null).getNat();
-          if (m != null) {
-            return new TNat(n.multiply(m));
-          }
-        }
-      }
-    }
-    return null;
+  Type canonType(Type[] env, TypeSet set, int args) {
+    return set.canon(this, args);
   }
 
-  Type byteSizeStoredRef(Type[] tenv) {
-    return null;
-  }
-
-  Type byteSizeStoredRef(Type[] tenv, Type a) {
-    return null;
-  }
-
-  Type byteSizeStoredRef(Type[] tenv, Type a, Type b) {
-    return (this == DataName.aref || this == DataName.aptr)
-        ? new TNat(Type.numBytes(Type.WORDSIZE))
-        : null;
-  }
-
+  /** Return the canonical version of a Tycon wrt to the given set. */
   Tycon canonTycon(TypeSet set) {
     return this;
   }
@@ -276,8 +223,24 @@ public abstract class Tycon extends TypeName {
     return null;
   }
 
-  Type specializeTycon(MILSpec spec, Type inst) {
-    return inst;
+  /**
+   * Determine if this is a singleton type (i.e., a type with only one value), in which case we will
+   * use the Unit type to provide a representation.
+   */
+  boolean isSingleton() {
+    return false;
+  }
+
+  /**
+   * Find out if there is a specialized version of the type with this Tycon as its head and the set
+   * of args (canonical) arguments on the stack of this MILSpec object.
+   */
+  Type specInst(MILSpec spec, int args) {
+    return null;
+  }
+
+  Type canonArgs(Type[] tenv, TypeSet set, int args) {
+    return set.rebuild(this.asType(), args);
   }
 
   BitdataRep findRep(BitdataMap m) {
@@ -288,30 +251,50 @@ public abstract class Tycon extends TypeName {
     return null;
   }
 
-  DataName isDataName() {
+  /** Determine whether this Tycon is a DataType that is a candidate for bitdata representation. */
+  DataType bitdataCandidate() {
     return null;
   }
+
+  DataType dataType() {
+    return null;
+  }
+
+  /** Representation vector for singleton types. */
+  public static final Type[] unitRep = new Type[] {unit.asType()};
+
+  /** Representation vector for bitdata types of width one. */
+  public static final Type[] flagRep = new Type[] {flag.asType()};
+
+  /** Representation vector for Ix, Ref, Ptr, etc. types that fit in a single word. */
+  public static final Type[] wordRep = new Type[] {word.asType()};
+
+  /** Representation vector for Init a types as functions of type [Word] ->> [Unit]. */
+  public static final Type[] initRep =
+      new Type[] {Type.milfun(Type.tuple(word.asType()), Type.tuple(unit.asType()))};
 
   /** Return the representation vector for values of this type. */
   Type[] repCalc() {
-    return null;
+    return (this == addr || this == nzword) ? Tycon.wordRep : null;
   }
 
   /**
-   * Determine whether this type constructor is of the form Bit, Ix, or ARef l returning an
-   * appropriate representation vector, or else null if none of these patterns applies. TODO: are
-   * there other types we should be including here?
+   * Return the representation vector for types formed by applying this type to the argument a. This
+   * allows us to provide special representations for types of the form Bit a, Ix a, Ref a, etc. If
+   * none of these apply, we just return null. TODO: are there other types we should be including
+   * here?
    */
-  Type[] bitdataTyconRep(Type a) {
-    return null;
-  }
-
-  /**
-   * Determine whether this type constructor is an ARef, returning either an appropriate
-   * representation vector, or else null.
-   */
-  Type[] bitdataTyconRep2(Type a, Type b) {
-    return null;
+  Type[] repCalc(Type a) {
+    return (this == ref || this == ptr)
+        ? Tycon.wordRep
+        : (this == bit)
+            ? a.simplifyNatType(null).bitvectorRep()
+            : (this == nzbit)
+                ? a.simplifyNatType(null).nzbitvectorRep()
+                : (this == ix)
+                    ? Tycon
+                        .wordRep // N.B. even Ix 1, a singleton type, is represented by a Word ...
+                    : (this == init) ? Tycon.initRep : null;
   }
 
   /**
@@ -324,6 +307,24 @@ public abstract class Tycon extends TypeName {
   }
 
   /**
+   * Generate a call to a new primitive, wrapped in an appropriate chain of closure definitions, if
+   * this type can be derived from pt in the following grammar: pt ::= [d1,...,dn] ->> rt ; rt ::=
+   * [pt] | [r1,...,rm] .
+   */
+  Tail generatePrim(Position pos, String id) {
+    return null;
+  }
+
+  /**
+   * Test to see whether the receiver matches the grammar for pt, but with the additional
+   * information that it appears in the context of an enclosing type of the form [d1,...,dn] ->>
+   * [this].
+   */
+  Call generatePrimNested(Position pos, String id, Type[] ds) {
+    return null;
+  }
+
+  /**
    * Test to determine if this skeleton is an application of (->>) to a tuple of types, returning
    * either the tuple components in an array or null if there is no match.
    */
@@ -331,9 +332,9 @@ public abstract class Tycon extends TypeName {
     return null;
   }
 
-  /** Test to determine if this type is the MILArrow, ->>, without any arguments. */
+  /** Test to determine if this type is the MIL function arrow, ->>, without any arguments. */
   boolean isMILArrow() {
-    return false;
+    return this == milArrow;
   }
 
   /**
@@ -347,11 +348,194 @@ public abstract class Tycon extends TypeName {
   }
 
   /**
+   * Generate a block whose code implements an uncurried version of the TopLevel f, whose type is
+   * the receiver. For this operation to succeed, the declared type must be a monomorphic type
+   * matching the grammar: et ::= [d1,...dm] ->> [et] | [d1,...dm] ->> t where di, t are types and
+   * we apply the first production as many times as possible. For example, if the declared type is
+   * [[X,Y] ->> [[Z] ->> [R]]], then the generated block will have type [X,Y,Z] >>= [R] and body
+   * b[x,y,z] = t <- f @ [x,y]; t @ [z].
+   */
+  Block liftToBlock0(Position pos, String id, TopLevel f) {
+    return null;
+  }
+
+  /**
+   * Helper function for liftToCode, used in the case where the receiver is the only component (in
+   * position 0, explaining the name of this method) in a tuple type that is known to be the range
+   * of a ->> function.
+   */
+  Code liftToCode0(Block b, Temp[] us, Atom f, Temp[] vs) {
+    return null;
+  }
+
+  /**
+   * Worker method for calculating the BitSize for a type of the form (this a) (i.e., this, applied
+   * to the argument a). The specified type environment, tenv, is used for both this and a.
+   */
+  Type bitSize(Type[] tenv, Type a) {
+    if (this == bit || this == nzbit) { // BitSize(Bit n) ==>  n,  same for (NZBit n)
+      return a.simplifyNatType(tenv);
+    } else if (this == ix) { // BitSize(Ix n)  ==>  (calculation below)
+      BigInteger n = a.ixBound(tenv);
+      if (n.signum() <= 0) {
+        return new TNat(BigInteger.ZERO);
+      }
+      int w = n.bitLength();
+      if (w < 0 || w >= Word.size()) {
+        return null;
+      }
+      return new TNat(BigInteger.valueOf(w));
+    } else if (this == ref || this == ptr) { // BitSize (Ref a) ==>  (calculation below)
+      return new TNat(a.refWidth(tenv));
+    }
+    return null;
+  }
+
+  /** Return the nat that specifies the bit size of the type produced by this type constructor. */
+  public Type bitSize() {
+    return (this == word || this == nzword)
+        ? Word.sizeType()
+        : (this == flag) ? Flag.sizeType : null;
+  }
+
+  /** Return the bit pattern for the values of this type. */
+  public Pat bitPat() {
+    return (this == word)
+        ? Word.allPat()
+        : (this == nzword) ? Word.nonzeroPat() : (this == flag) ? Flag.allPat : null;
+  }
+
+  Pat bitPat(Type[] tenv, Type a) {
+    if (this == ref) {
+      int w = a.refWidth(tenv);
+      return (w > 0) ? obdd.Pat.nonzero(w) : null;
+    } else if (this == ptr) {
+      int w = a.refWidth(tenv);
+      return (w > 0) ? obdd.Pat.all(w) : null;
+    } else if (this == bit) {
+      int w = a.bitWidth(tenv);
+      return (w >= 0) ? obdd.Pat.all(w) : null;
+    } else if (this == nzbit) {
+      int w = a.bitWidth(tenv);
+      return (w > 0) ? obdd.Pat.nonzero(w) : null;
+    } else if (this == ix) {
+      BigInteger n = a.ixBound(tenv);
+      if (n.signum() <= 0) {
+        return obdd.Pat.empty(0);
+      }
+      int w = n.bitLength();
+      if (w < 0 || w >= Word.size()) {
+        // TODO: generate an internal error?  or make above internals return null instead?
+        return null;
+      }
+      return obdd.Pat.lessEq(w, n.intValue());
+    }
+    return null;
+  }
+
+  /** Return the nat that specifies the byte size of the type produced by this type constructor. */
+  public Type byteSize() {
+    return null;
+  }
+
+  /**
+   * Worker method for calculating the ByteSize for a type of the form (this a) (i.e., this, applied
+   * to the argument a). The specified type environment, tenv, is used for both this and a.
+   */
+  Type byteSize(Type[] tenv, Type a) {
+    return (this == stored) ? a.byteSizeStored(tenv) : null;
+  }
+
+  /**
+   * Worker method for calculating the ByteSize for a type of the form (this a b) (i.e., this,
+   * applied to two arguments, a and b). The specified type environment, tenv, is used for this, a,
+   * and b.
+   */
+  Type byteSize(Type[] tenv, Type a, Type b) {
+    if (this == array || this == pad) {
+      // ByteSize (Array a b) = a * ByteSize b
+      // ByteSize (Pad   a b) = a * ByteSize b
+      BigInteger n = a.simplifyNatType(tenv).getNat();
+      if (n != null) {
+        Type s = b.byteSize(tenv);
+        if (s != null) {
+          BigInteger m = s.simplifyNatType(null).getNat();
+          if (m != null) {
+            if (this
+                == array) { // For array, check that element size is a multiple of the alignment
+              long align = b.alignment(tenv);
+              if (align < 1 || (m.longValue() % align) != 0) {
+                return null;
+              }
+            }
+            return new TNat(n.multiply(m));
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  /** Determine if this is a type of the form (Ref a) or (Ptr a) for some area type a. */
+  boolean referenceType(Type[] tenv) {
+    return false;
+  }
+
+  /**
+   * Determine if this type, applied to the given a, is a reference type of the form (Ref a) or (Ptr
+   * a). TODO: The a parameter is not currently inspected; we could attempt to check that it is a
+   * valid area type (but kind checking should have done that already) or else look to eliminate it.
+   */
+  boolean referenceType(Type[] tenv, Type a) {
+    return (this == ref || this == ptr);
+  }
+
+  /** Return the alignment associated with this type constructor. */
+  public long alignment() {
+    return 0;
+  }
+
+  /**
+   * Worker method for calculating the alignment for a type of the form (this a) (i.e., this,
+   * applied to the argument a). The specified type environment, tenv, is used for both this and a.
+   */
+  long alignment(Type[] tenv, Type a) {
+    return (this == stored) ? a.alignmentStored(tenv) : null;
+  }
+
+  /**
+   * Worker method for calculating the alignment for a type of the form (this a b) (i.e., this,
+   * applied to two arguments, a and b). The specified type environment, tenv, is used for this, a,
+   * and b.
+   */
+  long alignment(Type[] tenv, Type a, Type b) {
+    return (this == array)
+        ? b.alignment(tenv) // Align (Array a b) = Align b
+        : (this == pad)
+            ? 1L // Align (Pad   a b) = 1
+            : 0;
+  }
+
+  /**
+   * Determine whether this item is for a non-Unit, corresponding to a value that requires a
+   * run-time representation in the generated LLVM.
+   */
+  boolean nonUnit() {
+    return true;
+  }
+
+  /**
    * Calculate an LLVM type corresponding to (a canonical form of) a MIL type. The full
    * (canononical) type is passed in for reference as we unwind it on the underlying TypeSet stack.
    */
   llvm.Type toLLVMCalc(Type c, LLVMMap lm, int args) {
-    //  debug.Internal.error("toLLVM not defined for tycon " + this.asType());
+    if (this == milArrow) {
+      if (args != 2) {
+        debug.Internal.error("MILArrow toLLVM arity mismatch");
+      }
+      return lm.closurePtrTypeCalc(c);
+    }
+    debug.Internal.error("toLLVM not defined for tycon " + this.asType());
     return llvm.Type.vd; // not reached
   }
 }

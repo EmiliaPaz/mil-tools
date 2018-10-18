@@ -31,9 +31,9 @@ class LLVMMap extends TypeSet {
     this.prog = prog;
 
     // Create some basic mappings
-    typeMap.put(DataName.word.asType(), llvm.Type.i32);
-    typeMap.put(DataName.nzword.asType(), llvm.Type.i32);
-    typeMap.put(DataName.flag.asType(), llvm.Type.i1);
+    typeMap.put(Tycon.word.asType(), llvm.Type.word());
+    typeMap.put(Tycon.nzword.asType(), llvm.Type.word());
+    typeMap.put(Tycon.flag.asType(), llvm.Type.i1);
   }
 
   /** Add a type definition to the program associated with this LLVMMap. */
@@ -63,13 +63,14 @@ class LLVMMap extends TypeSet {
   }
 
   /**
-   * Specifies the type of the tag values that are used to distinguish between different
-   * constructors.
+   * Return the type of the tag values that are used to distinguish between different constructors.
    */
-  public static final llvm.Type tagType = llvm.Type.i32;
+  public static llvm.Type tagType() {
+    return llvm.Type.word();
+  }
 
   llvm.Type dataPtrTypeCalc(Type c) {
-    llvm.DefinedType dt = new llvm.DefinedType(new llvm.StructType(new llvm.Type[] {tagType}));
+    llvm.DefinedType dt = new llvm.DefinedType(new llvm.StructType(new llvm.Type[] {tagType()}));
     typedef("data layout for values of type " + c, dt);
     return dt.ptr();
   }
@@ -95,7 +96,7 @@ class LLVMMap extends TypeSet {
     llvm.DefinedType fun = new llvm.DefinedType(); // %fun = type %rng (%clo*, %dom...)*
     llvm.DefinedType clo = new llvm.DefinedType(); // %clo = type { %fun }
     llvm.Type ptr = clo.ptr(); // %ptr = type %clo*
-    llvm.Type[] dom = stackArg(1).closureArgs(this, ptr, 0);
+    llvm.Type[] dom = stackArg(1).closureArgs(this, ptr, 0, 0);
     llvm.Type rng = toLLVM(stackArg(2));
     fun.define(new llvm.FunctionType(rng, dom).ptr());
     clo.define(new llvm.StructType(new llvm.Type[] {fun}));
@@ -161,5 +162,29 @@ class LLVMMap extends TypeSet {
       primGlobalMap.put(d, g = d.primGlobalCalc(this));
     }
     return g;
+  }
+
+  /**
+   * A global reference to the allocator function, initialized on first use, at which point we emit
+   * an external declaration.
+   */
+  private llvm.Global allocFuncGlobal = null;
+
+  /** The type of value that is returned by a call to the alloc function. */
+  public static final llvm.Type allocRetType = llvm.Type.i8.ptr();
+
+  /**
+   * Return a Global reference to the alloc function, generating an appropriate LLVM declaration for
+   * the first use.
+   */
+  llvm.Global allocFuncGlobal() {
+    if (allocFuncGlobal == null) {
+      String id = "alloc";
+      llvm.FunctionType ft =
+          new llvm.FunctionType(allocRetType, new llvm.Type[] {llvm.Type.word()});
+      allocFuncGlobal = new llvm.Global(ft, id);
+      declare(id, ft);
+    }
+    return allocFuncGlobal;
   }
 }

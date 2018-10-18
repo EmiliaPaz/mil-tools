@@ -35,8 +35,9 @@ class EAp extends Expr {
     this.x = x;
   }
 
-  Position getPosition() {
-    return f.getPosition();
+  /** Return a source code position for this expression. */
+  Position getPos() {
+    return f.getPos();
   }
 
   /**
@@ -75,11 +76,11 @@ class EAp extends Expr {
   }
 
   /**
-   * Perform a scope analysis on this expression, creating a Temp object for each variable binding,
-   * checking that all of the identifiers that it references correspond to bound variables, and
-   * returning the set of free variables in the term.
+   * Perform scope analysis on this expression, creating a Temp for each variable binding, checking
+   * that all of the identifiers it references correspond to bound variables, and returning the set
+   * of free variables in the term.
    */
-  DefVars inScopeOf(Handler handler, MILEnv milenv, Env env) { //  f x
+  DefVars inScopeOf(Handler handler, MILEnv milenv, Env env) {
     return DefVars.add(f.inScopeOf(handler, milenv, env), x.inScopeOf(handler, milenv, env));
   }
 

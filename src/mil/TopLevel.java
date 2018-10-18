@@ -114,15 +114,16 @@ public class TopLevel extends TopDefn {
     return tail.dependencies(null);
   }
 
-  void displayDefn(PrintWriter out, boolean isEntrypoint) {
+  /** Display a printable representation of this definition on the specified PrintWriter. */
+  void dump(PrintWriter out, boolean isEntrypoint) {
     for (int i = 0; i < lhs.length; i++) {
-      lhs[i].displayDefn(out, isEntrypoint);
+      lhs[i].dump(out, isEntrypoint);
     }
     out.print(toString());
     out.print(" <-");
     out.println();
     Code.indent(out);
-    tail.displayln(out);
+    tail.displayln(out, null);
   }
 
   Type instantiate(int i) {
@@ -142,7 +143,7 @@ public class TopLevel extends TopDefn {
   }
 
   /**
-   * Type check the body of this definition, but reporting rather than throwing' an exception error
+   * Type check the body of this definition, but reporting rather than throwing an exception error
    * if the given handler is not null.
    */
   void checkBody(Handler handler) throws Failure {
@@ -178,11 +179,6 @@ public class TopLevel extends TopDefn {
   /** Lists the generic type variables for this definition. */
   protected TVar[] generics = TVar.noTVars;
 
-  /** Produce a printable description of the generic variables for this definition. */
-  public String showGenerics() {
-    return TVar.show(generics);
-  }
-
   /**
    * Calculate a generalized type for this binding, adding universal quantifiers for any unbound
    * type variable in the inferred type. (There are no "fixed" type variables here because all mil
@@ -190,15 +186,16 @@ public class TopLevel extends TopDefn {
    */
   void generalizeType(Handler handler) throws Failure {
     if (defining != null) {
-      for (int i = 0; i < lhs.length; i++) {
-        lhs[i].generalizeType(handler);
-      }
       TVars gens = defining.tvars();
       generics = TVar.generics(gens, null);
-      // !   debug.Log.println("generics: " + showGenerics());
+      debug.Log.println(
+          "generics for " + this + ": " + TVar.show(generics) + " in type " + defining.skeleton());
       declared = defining.generalize(generics);
-      // !   debug.Log.println("TopLevel group inferred " + toString() + " :: " + declared);
+      debug.Log.println("TopLevel group inferred " + toString() + " :: " + declared);
       findAmbigTVars(handler, gens); // search for ambiguous type variables ...
+      for (int i = 0; i < lhs.length; i++) {
+        lhs[i].generalizeLhsType(pos, handler, gens, generics);
+      }
     }
   }
 
@@ -224,14 +221,7 @@ public class TopLevel extends TopDefn {
 
   /** Apply inlining. */
   public void inlining() {
-    // !  System.out.println("==================================");
-    // !  System.out.println("Going to try inlining on:");
-    // !  displayDefn();
-    // !  System.out.println();
     tail = tail.inlineTail();
-    // !  System.out.println("And the result is:");
-    // !  displayDefn();
-    // !  System.out.println();
   }
 
   /**
@@ -300,19 +290,11 @@ public class TopLevel extends TopDefn {
     return tail.lookForDataAlloc();
   }
 
-  /**
-   * Determine whether this src argument is a value base (i.e., a numeric or global/primitive
-   * constant) that is suitable for use in complex addressing modes.
-   */
-  boolean isBase() {
-    return false;
-  }
-
-  /** Holds the most recently computed summary value for this item. */
+  /** Holds the most recently computed summary value for this definition. */
   private int summary;
 
   void findIn(TopLevels[] topLevels) {
-    if (tail.isPure()) {
+    if (!isEntrypoint && tail.isPure()) {
       summary = tail.summary();
       int idx = this.summary % topLevels.length;
       if (idx < 0) idx += topLevels.length;
@@ -320,8 +302,12 @@ public class TopLevel extends TopDefn {
         if (ts.head.summary == this.summary
             && this.tail.alphaTail(null, ts.head.tail, null)
             && this.lhs.length == ts.head.lhs.length) {
-          MILProgram.report("Identifying topdefn " + toString() + " with " + ts.head.toString());
-          this.tail = new Return(ts.head.tops());
+          if (ts.head.declared == null
+              || (this.declared != null && this.declared.alphaEquiv(ts.head.declared))) {
+            MILProgram.report("Identifying topdefn " + toString() + " with " + ts.head.toString());
+            this.tail = new Return(ts.head.tops());
+            return;
+          }
         }
       }
       topLevels[idx] = new TopLevels(this, topLevels[idx]);
@@ -329,11 +315,11 @@ public class TopLevel extends TopDefn {
   }
 
   /**
-   * Compute a summary for this definition (if it is a block or top-level) and then look for a
-   * previously encountered item with the same code in the given table. Return true if a duplicate
-   * was found.
+   * Compute a summary for this definition (if it is a block, top-level, or closure) and then look
+   * for a previously encountered item with the same code in the given table. Return true if a
+   * duplicate was found.
    */
-  boolean summarizeDefns(Blocks[] blocks, TopLevels[] topLevels) {
+  boolean summarizeDefns(Blocks[] blocks, TopLevels[] topLevels, ClosureDefns[] closures) {
     findIn(topLevels);
     return false;
   }
@@ -342,10 +328,7 @@ public class TopLevel extends TopDefn {
     tail.eliminateDuplicates();
   }
 
-  void collect() {
-    tail.collect();
-  }
-
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     for (int i = 0; i < lhs.length; i++) {
       lhs[i].collect(set);
@@ -390,7 +373,7 @@ public class TopLevel extends TopDefn {
             + " :: "
             + this.declared
             + ", generics="
-            + torig.showGenerics()
+            + TVar.show(torig.generics)
             + ", substitution="
             + s);
     this.tail = torig.tail.specializeTail(spec, s, null);
@@ -401,7 +384,7 @@ public class TopLevel extends TopDefn {
    * given type.
    */
   TopLevel specializedTopLevel(MILSpec spec, Type inst, int i) {
-    return spec.specializedTopLevel(this, defining.apply(lhs[i].specializingSubst(inst)));
+    return spec.specializedTopLevel(this, defining.apply(lhs[i].specializingSubst(generics, inst)));
   }
 
   /**
@@ -410,12 +393,13 @@ public class TopLevel extends TopDefn {
    * version to share the same name as the original).
    */
   Defn specializeEntry(MILSpec spec) throws Failure {
-    if (declared.isQuantified()) {
-      throw new PolymorphicEntrypointFailure("top-level", this);
+    Type t = declared.isMonomorphic();
+    if (t != null) {
+      TopLevel tl = spec.specializedTopLevel(this, t);
+      TopLhs.copyIds(tl.lhs, this.lhs); // use the same names as in the original program
+      return tl;
     }
-    TopLevel tl = spec.specializedTopLevel(this, declared);
-    TopLhs.copyIds(tl.lhs, this.lhs); // use the same names as in the original program
-    return tl;
+    throw new PolymorphicEntrypointFailure("top-level", this);
   }
 
   /** Update all declared types with canonical versions. */
@@ -429,7 +413,7 @@ public class TopLevel extends TopDefn {
     tail = tail.bitdataRewrite(m);
   }
 
-  void topLevelrepTransform(Handler handler, RepTypeSet set) {
+  void topLevelRepTransform(Handler handler, RepTypeSet set) {
     // Is a change of representation required?
     Type[][] reps = TopLhs.reps(lhs);
     if (reps != null) {
@@ -479,7 +463,11 @@ public class TopLevel extends TopDefn {
     }
   }
 
-  void setDeclared(Handler handler, Position pos, int i, Scheme scheme) {
+  Tail makeTail() throws Failure {
+    return (lhs.length == 1) ? new Return(new TopDef(this, 0)) : super.makeTail();
+  }
+
+  public void setDeclared(Handler handler, Position pos, int i, Scheme scheme) {
     lhs[i].setDeclared(handler, pos, scheme);
   }
 
@@ -502,7 +490,6 @@ public class TopLevel extends TopDefn {
    * each subsequent call.
    */
   Temp[] addArgs() throws Failure {
-    // !     System.out.println("In TopLevel for " + toString());
     // Note: these definitions will be visited only once from the top-level
     // pass through the list of definitions in the program.
     Temps ts = tail.addArgs(null);
@@ -531,11 +518,17 @@ public class TopLevel extends TopDefn {
 
   /** Calculate a staticValue (which could be null) for each top level definition. */
   void calcStaticValues(LLVMMap lm, llvm.Program prog) {
-    staticValue = tail.calcStaticValue(lm, prog);
-    // Add global variable definitions for any lhs components without a static value:
-    for (int i = 0; i < lhs.length; i++) {
-      if (staticValue == null || staticValue[i] == null) {
-        prog.add(lhs[i].globalVarDefn(lm));
+    if (TopLhs.hasNonUnits(lhs)) {
+      staticValue = tail.calcStaticValue(lm, prog);
+      // Add global variable definitions for any (non unit) lhs components without a static value:
+      for (int i = 0; i < lhs.length; i++) {
+        if (lhs[i].nonUnit()) {
+          if (staticValue == null || staticValue[i] == null) {
+            prog.add(lhs[i].globalVarDefn(lm, llvm.Mods.entry(isEntrypoint)));
+          } else if (isEntrypoint) {
+            prog.add(lhs[i].globalVarDefn(lm, llvm.Mods.NONE, staticValue[i]));
+          }
+        }
       }
     }
   }
@@ -551,16 +544,25 @@ public class TopLevel extends TopDefn {
   }
 
   /**
+   * Count the number of calls to blocks, both regular and tail calls, in this abstract syntax
+   * fragment. This is suitable for counting the calls in the main function; unlike countCalls, it
+   * does not skip tail calls at the end of a code sequence.
+   */
+  void countAllCalls() {
+    tail.countAllCalls();
+  }
+
+  /**
    * Generate code (in reverse) to initialize each TopLevel (unless all of the components are
-   * statically known). TODO: what if a TopLevel has an empty array of Lhs?
+   * statically known).
    */
   llvm.Code addRevInitCode(LLVMMap lm, InitVarMap ivm, llvm.Code code) {
-    if (staticValue == null || staticValue.length == 0) {
-      return this.revInitCode(lm, ivm, code); // no static values
+    if (staticValue == null) {
+      return tail.revInitTail(lm, ivm, this, lhs, code); // no static values
     } else {
       for (int i = 0; i < staticValue.length; i++) {
         if (staticValue[i] == null) {
-          return this.revInitCode(lm, ivm, code); // some static values
+          return tail.revInitTail(lm, ivm, this, lhs, code); // some static values
         }
       }
       return code; // all components have static values, no new code required
@@ -568,20 +570,15 @@ public class TopLevel extends TopDefn {
   }
 
   /**
-   * Worker function for generateRevInitCode, called when we have established that the tail
-   * expression for this TopLevel should be executed during program initialization.
+   * Use the values in the given list of atoms to initialize the (non static) left hand sides of
+   * this TopLevel.
    */
-  private llvm.Code revInitCode(LLVMMap lm, InitVarMap ivm, llvm.Code code) {
-    Temp[] vs = new Temp[lhs.length];
+  llvm.Code initLLVMTopLhs(LLVMMap lm, InitVarMap ivm, Atom[] as, llvm.Code code) {
     for (int i = 0; i < lhs.length; i++) {
-      vs[i] = lhs[i].makeTemp();
-    }
-    code = llvm.Code.reverseOnto(tail.toLLVMCont(lm, ivm, null, vs, null), code);
-    for (int i = 0; i < lhs.length; i++) {
-      if (staticValue == null || staticValue[i] == null) {
-        llvm.Local var = ivm.lookup(lm, vs[i]);
-        ivm.mapGlobal(this, i, var);
-        code = new llvm.Store(var, new llvm.Global(var.getType().ptr(), lhs[i].getId()), code);
+      if (lhs[i].nonUnit() && staticValue(i) == null) {
+        llvm.Value val = as[i].toLLVMAtom(lm, ivm);
+        ivm.mapGlobal(new TopDef(this, i), val);
+        code = new llvm.Store(val, new llvm.Global(val.getType().ptr(), lhs[i].getId()), code);
       }
     }
     return code;

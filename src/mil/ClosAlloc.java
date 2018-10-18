@@ -33,7 +33,7 @@ public class ClosAlloc extends Allocator {
     this.k = k;
   }
 
-  /** Test to see if two Tail expressions are the same. */
+  /** Test if two Tail expressions are the same. */
   public boolean sameTail(Tail that) {
     return that.sameClosAlloc(this);
   }
@@ -48,8 +48,8 @@ public class ClosAlloc extends Allocator {
   }
 
   /** Display a printable representation of this MIL construct on the specified PrintWriter. */
-  public void dump(PrintWriter out) {
-    dump(out, k.toString(), "{", args, "}");
+  public void dump(PrintWriter out, Temps ts) {
+    dump(out, k.toString(), "{", args, "}", ts);
   }
 
   /** Construct a new Call value that is based on the receiver, without copying the arguments. */
@@ -99,24 +99,15 @@ public class ClosAlloc extends Allocator {
 
   ClosAlloc deriveWithKnownCons(Call[] calls) {
     // if (calls!=null) { return null; } // disable optimization
-    // !System.out.print("deriveWithKnownCons for ClosAlloc: ");
-    // !this.dump();
-    // !System.out.println();
     if (calls.length != args.length) {
       debug.Internal.error("ClosAlloc argument list length mismatch in deriveWithKnownCons");
     }
     ClosureDefn nk = k.deriveWithKnownCons(calls);
     if (nk == null) {
-      // !System.out.println("Declined to specialize this closure allocation!");
       return null;
     } else {
       ClosAlloc ca = new ClosAlloc(nk);
       ca.withArgs(specializedArgs(calls));
-      // !System.out.print("Rewrote knownCons thunk: ");
-      // !this.dump();
-      // !System.out.print(" as: ");
-      // !ca.dump();
-      // !System.out.println();
       return ca;
     }
   }
@@ -141,15 +132,7 @@ public class ClosAlloc extends Allocator {
     if (calls != null) {
       ClosAlloc ca = deriveWithKnownCons(calls);
       if (ca != null) {
-        // !System.out.print("Calls for " + k.getId() + " are ");
-        // !Call.dump(calls);
-        // !System.out.println();
         MILProgram.report("deriving specialized block for ClosAlloc block " + k.getId());
-        // !System.out.print("deriveWithKnownCons for ClosAlloc: ");
-        // !this.dump();
-        // !System.out.print(" -> ");
-        // !ca.dump();
-        // !System.out.println();
         return new Done(ca);
       }
     }
@@ -190,6 +173,14 @@ public class ClosAlloc extends Allocator {
     return this.k == that.k && this.alphaArgs(thisvars, that, thatvars);
   }
 
+  void eliminateDuplicates() {
+    ClosureDefn k1 = k.getReplaceWith();
+    if (k1 != null) {
+      k = k1;
+    }
+  }
+
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     if (type != null) {
       type = type.canonAllocType(set);
@@ -225,9 +216,21 @@ public class ClosAlloc extends Allocator {
   }
 
   /**
-   * Generate LLVM code to execute this Tail and return a result from the right hand side of a Bind.
+   * Generate LLVM code to execute this Tail with NO result from the right hand side of a Bind. Set
+   * isTail to true if the code sequence c is an immediate ret void instruction.
    */
-  llvm.Code toLLVMContBind(LLVMMap lm, VarMap vm, TempSubst s, llvm.Local lhs, llvm.Code c) {
+  llvm.Code toLLVMBindVoid(LLVMMap lm, VarMap vm, TempSubst s, boolean isTail, llvm.Code c) {
+    debug.Internal.error("ClosAlloc does not return void");
+    return c;
+  }
+
+  /**
+   * Generate LLVM code to execute this Tail and return a result from the right hand side of a Bind.
+   * Set isTail to true if the code sequence c will immediately return the value in the specified
+   * lhs.
+   */
+  llvm.Code toLLVMBindCont(
+      LLVMMap lm, VarMap vm, TempSubst s, boolean isTail, llvm.Local lhs, llvm.Code c) {
     llvm.Type objt = lm.closureLayoutType(k).ptr(); // type of a pointer to a k object
     llvm.Local obj = vm.reg(objt); // a register to point to the new object
     return alloc(

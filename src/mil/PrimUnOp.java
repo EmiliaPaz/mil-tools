@@ -27,17 +27,17 @@ import java.io.PrintWriter;
 public abstract class PrimUnOp extends Prim {
 
   /** Default constructor. */
-  public PrimUnOp(String id, int arity, int outity, int purity, BlockType blockType) {
-    super(id, arity, outity, purity, blockType);
+  public PrimUnOp(String id, int purity, BlockType blockType) {
+    super(id, purity, blockType);
   }
 
-  abstract int op(int n);
+  abstract long op(long n);
 
   void exec(PrintWriter out, int fp, Value[] stack) throws Failure {
-    stack[fp] = new IntValue(op(stack[fp].getInt()));
+    stack[fp] = new WordValue(op(stack[fp].getInt()));
   }
 
-  Code fold(int n) {
+  Code fold(long n) {
     MILProgram.report("constant folding for " + getId());
     return PrimCall.done(op(n));
   }
@@ -47,7 +47,8 @@ public abstract class PrimUnOp extends Prim {
    * is not expected to produce any results, but execution is expected to continue with the given
    * code.
    */
-  llvm.Code toLLVMPrimVoid(LLVMMap lm, VarMap vm, TempSubst s, Atom[] args, llvm.Code c) {
+  llvm.Code toLLVMPrimVoid(
+      LLVMMap lm, VarMap vm, TempSubst s, Atom[] args, boolean isTail, llvm.Code c) {
     debug.Internal.error(id + " is not a void primitive");
     return c;
   }

@@ -56,14 +56,17 @@ class MILAST extends CoreProgram {
   public void syntaxAnalysis(Handler handler, MILLoader loader) throws Failure {
     debug.Log.println("Loading " + name + " ...");
     try {
-      Reader reader = new FileReader(name);
+      Reader reader = new FileReader(loader.findFile(handler, name));
       Source source = new JavaSource(handler, name, reader);
-      source = new CacheSource(handler, source); // Add an (optional) caching layer
+      if (name.endsWith(".lmil")) {
+        source = new LiterateSource(handler, true, source);
+      }
+      source = new CacheSource(handler, source); // Add a caching layer
       MILLexer lexer = new MILLexer(handler, true, source);
       MILParser parser = new MILParser(handler, lexer, loader);
       parser.parse(this);
     } catch (FileNotFoundException e) {
-      handler.report(new Failure("Cannot open input file " + name));
+      handler.report(new Failure("Cannot open input file \"" + name + "\""));
     }
     handler.abortOnFailures();
   }

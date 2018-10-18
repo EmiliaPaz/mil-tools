@@ -86,7 +86,7 @@ public class DefnSCC {
     return false;
   }
 
-  /** Display a printable representation of this MIL construct on the specified PrintWriter. */
+  /** Display a printable representation of this object on the specified PrintWriter. */
   public void dump(PrintWriter out) {
     out.println("-----------------------------------------");
     out.print("-- ");
@@ -172,6 +172,12 @@ public class DefnSCC {
     } while (changed);
   }
 
+  void detectLoops() {
+    for (Defns ds = getBindings(); ds != null; ds = ds.next) {
+      ds.head.detectLoops(null);
+    }
+  }
+
   /** Perform pre-inlining cleanup on each Block in this SCC. */
   void cleanup() {
     for (Defns ds = getBindings(); ds != null; ds = ds.next) {
@@ -179,23 +185,16 @@ public class DefnSCC {
     }
   }
 
-  void detectLoops() {
-    for (Defns ds = getBindings(); ds != null; ds = ds.next) {
-      ds.head.detectLoops(null);
-    }
-  }
-
   /** Apply inlining. */
   public void inlining() {
     for (Defns ds = getBindings(); ds != null; ds = ds.next) {
-      // !System.out.println("inlining loop at: " + ds.head.getId());
       ds.head.inlining();
     }
   }
 
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     for (Defns ds = bindings; ds != null; ds = ds.next) {
-      // !   ds.head.displayDefn();
       ds.head.collect(set);
     }
   }

@@ -35,11 +35,11 @@ abstract class ELit extends PosExpr {
   }
 
   /**
-   * Perform a scope analysis on this expression, creating a Temp object for each variable binding,
-   * checking that all of the identifiers that it references correspond to bound variables, and
-   * returning the set of free variables in the term.
+   * Perform scope analysis on this expression, creating a Temp for each variable binding, checking
+   * that all of the identifiers it references correspond to bound variables, and returning the set
+   * of free variables in the term.
    */
-  DefVars inScopeOf(Handler handler, MILEnv milenv, Env env) { //  n
+  DefVars inScopeOf(Handler handler, MILEnv milenv, Env env) {
     return null;
   }
 
@@ -63,6 +63,17 @@ abstract class ELit extends PosExpr {
 
   Expr lift(LiftEnv lenv) { // literal
     return this;
+  }
+
+  /** Compile an expression into a Tail. */
+  Code compTail(final CGEnv env, final Block abort, final TailCont kt) {
+    return this.compAtom(
+        env,
+        new AtomCont() {
+          Code with(final Atom la) {
+            return kt.with(new Return(la));
+          }
+        });
   }
 
   /** Compile a monadic expression into a Tail. */

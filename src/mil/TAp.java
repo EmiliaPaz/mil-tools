@@ -160,55 +160,12 @@ public class TAp extends Type {
   }
 
   /**
-   * Return the natural number type that specifies the BitSize of this type (required to be of kind
-   * *) or null if this type has no BitSize (i.e., no bit-level representation). This method should
-   * only be used with a limited collection of classes (we only expect to use it with top-level,
-   * monomorphic types), but, just in case, we also provide implementations for classes that we do
-   * not expect to see in practice, and allow for the possibility of a type environment, even though
-   * we expect it will only ever be null.
+   * Find the arity of this tuple type (i.e., the number of components) or return (-1) if it is not
+   * a tuple type. Parameter n specifies the number of arguments that have already been found; it
+   * should be 0 for the initial call.
    */
-  public Type bitSize(Type[] tenv) {
-    return fun.bitSize(tenv, arg);
-  }
-
-  /**
-   * Worker method for calculating the BitSize for a type of the form (this a) (i.e., this, applied
-   * to the argument a). The specified type environment, tenv, is used for both this and a.
-   */
-  Type bitSize(Type[] tenv, Type a) {
-    return fun.bitSize(tenv, arg, a);
-  }
-
-  public Pat bitPat(Type[] tenv) {
-    return fun.bitPat(tenv, arg);
-  }
-
-  Pat bitPat(Type[] tenv, Type a) {
-    return fun.bitPat(tenv, arg, a);
-  }
-
-  /**
-   * Return the natural number type that specifies the ByteSize of this type (required to be of kind
-   * area) or null if this type has no ByteSize (i.e., no memory layout).
-   */
-  public Type byteSize(Type[] tenv) {
-    return fun.byteSize(tenv, arg);
-  }
-
-  /**
-   * Worker method for calculating the ByteSize for a type of the form (this a) (i.e., this, applied
-   * to the argument a). The specified type environment, tenv, is used for both this and a.
-   */
-  Type byteSize(Type[] tenv, Type a) {
-    return fun.byteSize(tenv, arg, a);
-  }
-
-  Type byteSizeStoredRef(Type[] tenv) {
-    return fun.byteSizeStoredRef(tenv, arg);
-  }
-
-  Type byteSizeStoredRef(Type[] tenv, Type a) {
-    return fun.byteSizeStoredRef(tenv, arg, a);
+  int tupleArity(Type[] tenv, int n) {
+    return fun.tupleArity(tenv, n + 1);
   }
 
   /**
@@ -222,7 +179,7 @@ public class TAp extends Type {
   }
 
   /**
-   * Find a canonical version of this type in the given set, using the specified environment to
+   * Find the canonical version of this type in the given set, using the specified environment to
    * interpret TGens, and assuming that we have already pushed a certain number of args for this
    * type on the stack.
    */
@@ -243,19 +200,22 @@ public class TAp extends Type {
     return new TAp(fun.apply(thisenv, s), arg.apply(thisenv, s));
   }
 
-  /** Return the representation vector for values of this type. */
-  Type[] repCalc() {
-    // Look for patterns:  Bit n,  Ix n,  ARef n a,  APtr n a, ...
-    return fun.bitdataTyconRep(arg);
+  boolean instMatches(Type right) {
+    return right.instMatchesTAp(this);
   }
 
-  /**
-   * Determine whether this type constructor is of the form Bit, Ix, or ARef l returning an
-   * appropriate representation vector, or else null if none of these patterns applies. TODO: are
-   * there other types we should be including here?
-   */
-  Type[] bitdataTyconRep(Type a) {
-    return fun.bitdataTyconRep2(arg, a);
+  boolean instMatchesTAp(TAp left) {
+    return left.arg == this.arg && left.fun.instMatches(this.fun);
+  }
+
+  Type canonArgs(Type[] tenv, TypeSet set, int args) {
+    set.push(this.arg.canonType(tenv, set, 0));
+    return fun.canonArgs(tenv, set, args + 1);
+  }
+
+  /** Return the representation vector for values of this type. */
+  Type[] repCalc() {
+    return fun.repCalc(arg);
   }
 
   /**
@@ -356,8 +316,54 @@ public class TAp extends Type {
     return fun.useBitdataLo(arg);
   }
 
-  boolean useBitdataLo(Type s) {
-    return fun.useBitdataLo(arg, s);
+  /**
+   * Return the natural number type that specifies the BitSize of this type (required to be of kind
+   * *) or null if this type has no BitSize (i.e., no bit-level representation). This method should
+   * only be used with a limited collection of classes (we only expect to use it with top-level,
+   * monomorphic types), but, just in case, we also provide implementations for classes that we do
+   * not expect to see in practice, and allow for the possibility of a type environment, even though
+   * we expect it will only ever be null.
+   */
+  public Type bitSize(Type[] tenv) {
+    return fun.bitSize(tenv, arg);
+  }
+
+  public Pat bitPat(Type[] tenv) {
+    return fun.bitPat(tenv, arg);
+  }
+
+  /**
+   * Return the natural number type that specifies the ByteSize of this type (required to be of kind
+   * area) or null if this type has no ByteSize (i.e., no memory layout).
+   */
+  public Type byteSize(Type[] tenv) {
+    return fun.byteSize(tenv, arg);
+  }
+
+  /**
+   * Worker method for calculating the ByteSize for a type of the form (this a) (i.e., this, applied
+   * to the argument a). The specified type environment, tenv, is used for both this and a.
+   */
+  Type byteSize(Type[] tenv, Type a) {
+    return fun.byteSize(tenv, arg, a);
+  }
+
+  /** Determine if this is a type of the form (Ref a) or (Ptr a) for some area type a. */
+  boolean referenceType(Type[] tenv) {
+    return fun.referenceType(tenv, arg);
+  }
+
+  /** Return the alignment of this type (or zero if there is no alignment). */
+  public long alignment(Type[] tenv) {
+    return fun.alignment(tenv, arg);
+  }
+
+  /**
+   * Worker method for calculating the alignment for a type of the form (this a) (i.e., this,
+   * applied to the argument a). The specified type environment, tenv, is used for both this and a.
+   */
+  long alignment(Type[] tenv, Type a) {
+    return fun.alignment(tenv, arg, a);
   }
 
   /**
@@ -373,11 +379,19 @@ public class TAp extends Type {
     return arg;
   }
 
-  /** Calculate an array of llvm Types corresponding to the components of a given MIL Tuple type. */
-  llvm.Type[] tupleToArray(LLVMMap lm, int args) {
-    llvm.Type[] tys = fun.tupleToArray(lm, ++args);
-    tys[tys.length - args] = lm.toLLVM(arg);
-    return tys;
+  /**
+   * Calculate an array of llvm Types corresponding to the components of a given MIL Tuple type.
+   * Unit types are filtered out in the process, so the resulting array may not actually have as
+   * many components as the input tuple type.
+   */
+  llvm.Type[] tupleToArray(LLVMMap lm, int args, int nonUnits) {
+    if (arg.nonUnit()) {
+      llvm.Type[] tys = fun.tupleToArray(lm, args + 1, ++nonUnits);
+      tys[tys.length - nonUnits] = lm.toLLVM(arg);
+      return tys;
+    } else {
+      return fun.tupleToArray(lm, args + 1, nonUnits);
+    }
   }
 
   /**
@@ -385,9 +399,13 @@ public class TAp extends Type {
    * type as the first argument and adding an extra argument for each component in this type, which
    * must be a tuple.
    */
-  llvm.Type[] closureArgs(LLVMMap lm, llvm.Type ptr, int args) {
-    llvm.Type[] cargs = fun.closureArgs(lm, ptr, ++args);
-    cargs[cargs.length - args] = lm.toLLVM(arg);
-    return cargs;
+  llvm.Type[] closureArgs(LLVMMap lm, llvm.Type ptr, int args, int nonUnits) {
+    if (arg.nonUnit()) { // Include non units in the final array
+      llvm.Type[] cargs = fun.closureArgs(lm, ptr, args + 1, ++nonUnits);
+      cargs[cargs.length - nonUnits] = lm.toLLVM(arg);
+      return cargs;
+    } else { // Skip unit arguments
+      return fun.closureArgs(lm, ptr, args + 1, nonUnits);
+    }
   }
 }

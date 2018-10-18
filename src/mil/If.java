@@ -57,18 +57,22 @@ public class If extends Code {
   }
 
   /** Display a printable representation of this MIL construct on the specified PrintWriter. */
-  public void dump(PrintWriter out) {
-    indentln(out, "if " + a);
+  public void dump(PrintWriter out, Temps ts) {
+    indentln(out, "if " + a.toString(ts));
     indent(out);
     out.print("  then ");
-    ifTrue.displayln(out);
+    ifTrue.displayln(out, ts);
     indent(out);
     out.print("  else ");
-    ifFalse.displayln(out);
+    ifFalse.displayln(out, ts);
   }
 
-  /** Force the application of a TempSubst to this Code sequence. */
-  public Code forceApply(TempSubst s) { // if a then ifTrue else ifFalse
+  /**
+   * Force the application of a TempSubst to this Code sequence, forcing construction of a fresh
+   * copy of the input code structure, including the introduction of new temporaries in place of any
+   * variables introduced by Binds.
+   */
+  public Code forceApply(TempSubst s) {
     return new If(a.apply(s), ifTrue.forceApplyBlockCall(s), ifFalse.forceApplyBlockCall(s));
   }
 
@@ -78,7 +82,7 @@ public class If extends Code {
   }
 
   Type inferType(Position pos) throws Failure { // if a then ifTrue else ifFalse
-    a.instantiate().unify(pos, DataName.flag.asType());
+    a.instantiate().unify(pos, Tycon.flag.asType());
     Type t = ifTrue.inferType(pos);
     t.unify(pos, ifFalse.inferType(pos));
     return t;
@@ -121,14 +125,9 @@ public class If extends Code {
    */
   public Code casesOn(Temp v, BlockCall bc) {
     if (a == v && bc.contCand()) {
-      // !System.out.println("We can use a cases optimization here ... !");
-      // !dump();
       // Construct a continuation for the derived block:
       Tail cont = makeCont(v);
       Temp w = new Temp();
-      // !System.out.print("The continuation is ");
-      // !cont.dump();
-      // !System.out.println();
 
       // Replace original code with call to a new derived block:
       return new Bind(w, cont, new Done(bc.deriveWithCont(w)));
@@ -202,7 +201,7 @@ public class If extends Code {
   /** Optimize a Code block using a simple flow analysis. */
   public Code flow(Facts facts, TempSubst s) { // if a then ifTrue else ifFalse
     a = a.apply(s);
-    FlagConst c = a.isFlagConst(); // Does the argument hold a known constant?
+    Flag c = a.isFlag(); // Does the argument hold a known constant?
     if (c != null) {
       BlockCall bc = c.getVal() ? ifTrue : ifFalse;
       return new Done(bc.forceApplyBlockCall(a.mapsTo(c, s)).rewriteBlockCall(facts));
@@ -220,10 +219,10 @@ public class If extends Code {
         }
       }
     }
-    ifTrue = ifTrue.applyBlockCall(a.mapsTo(FlagConst.True, s)).rewriteBlockCall(facts);
-    ifFalse = ifFalse.applyBlockCall(a.mapsTo(FlagConst.False, s)).rewriteBlockCall(facts);
-    FlagConst tc = ifTrue.returnsFlagConst();
-    FlagConst fc = ifFalse.returnsFlagConst();
+    ifTrue = ifTrue.applyBlockCall(a.mapsTo(Flag.True, s)).rewriteBlockCall(facts);
+    ifFalse = ifFalse.applyBlockCall(a.mapsTo(Flag.False, s)).rewriteBlockCall(facts);
+    Flag tc = ifTrue.returnsFlag();
+    Flag fc = ifFalse.returnsFlag();
     if (tc != null && fc != null) {
       boolean tb = tc.getVal();
       boolean fb = fc.getVal();
@@ -279,11 +278,7 @@ public class If extends Code {
     ifFalse.eliminateDuplicates();
   }
 
-  void collect() {
-    ifTrue.collect();
-    ifFalse.collect();
-  }
-
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     a.collect(set);
     ifTrue.collect(set);
@@ -313,13 +308,23 @@ public class If extends Code {
   }
 
   /** Find the argument variables that are used in this Code sequence. */
-  Temps addArgs() throws Failure { // if a then ifTrue else ifFalse
+  Temps addArgs() throws Failure {
     return a.add(ifFalse.addArgs(ifTrue.addArgs(null)));
   }
 
   /** Count the number of non-tail calls to blocks in this abstract syntax fragment. */
   void countCalls() {
     /* no non-tail calls here */
+  }
+
+  /**
+   * Count the number of calls to blocks, both regular and tail calls, in this abstract syntax
+   * fragment. This is suitable for counting the calls in the main function; unlike countCalls, it
+   * does not skip tail calls at the end of a code sequence.
+   */
+  void countAllCalls() {
+    ifTrue.countAllCalls();
+    ifFalse.countAllCalls();
   }
 
   /**

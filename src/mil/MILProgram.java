@@ -23,27 +23,32 @@ import compiler.BuiltinPosition;
 import compiler.Failure;
 import compiler.Handler;
 import core.*;
-import java.io.IOException;
 import java.io.PrintWriter;
 
 /** Provides a representation for MIL programs. */
 public class MILProgram {
+
+  /** The main definition for this program, if specified. */
+  private Defn main = null;
+
+  public void setMain(Defn main) {
+    this.main = main;
+  }
 
   /** Stores a list of the entry points for this program. */
   private Defns entries = null;
 
   /** Add an entry point for this program, if it is not already included. */
   public void addEntry(Defn defn) {
-    // !System.out.println("Adding entry for " + defn.getId());
     if (!Defns.isIn(defn, entries)) {
       entries = new Defns(defn, entries);
-      defn.isEntrypoint(true);
+      defn.setIsEntrypoint(true);
     }
   }
 
   /** Report whether this program is empty or not (i.e., whether it has any entrypoints). */
   public boolean isEmpty() {
-    return (entries == null);
+    return (main == null) && (entries == null);
   }
 
   /** Record the list of strongly connected components in this program. */
@@ -56,9 +61,9 @@ public class MILProgram {
     for (Defns ds = entries; ds != null; ds = ds.next) {
       defns = ds.head.visitDepends(defns);
     }
-    // ! if (defns==null) {
-    // !   System.out.println("No definitions remain");
-    // ! }
+    if (main != null) {
+      defns = main.visitDepends(defns);
+    }
     return defns;
   }
 
@@ -70,22 +75,7 @@ public class MILProgram {
     sccs = Defns.searchReverse(reachable()); // Compute the strongly-connected components
   }
 
-  public void toDot() {
-    PrintWriter out = new PrintWriter(System.out);
-    toDot(out);
-    out.flush();
-  }
-
-  public void toDot(String name) {
-    try {
-      PrintWriter out = new PrintWriter(name);
-      toDot(out);
-      out.close();
-    } catch (IOException e) {
-      System.out.println("Attempt to create dot output in \"" + name + "\" failed");
-    }
-  }
-
+  /** Generate a dot description of this program's call graph on the specified PrintWriter. */
   public void toDot(PrintWriter out) {
     out.println("digraph MIL {");
     for (Defns ds = reachable(); ds != null; ds = ds.next) {
@@ -101,25 +91,14 @@ public class MILProgram {
     out.println("}");
   }
 
-  /** Display a printable representation of this MIL construct on the standard output. */
+  /** Display a printable representation of this object on the standard output. */
   public void dump() {
     PrintWriter out = new PrintWriter(System.out);
     dump(out);
     out.flush();
   }
 
-  /** Write text for this MIL construct in a file with the specified name. */
-  public void dump(String name) {
-    try {
-      PrintWriter out = new PrintWriter(name);
-      dump(out);
-      out.close();
-    } catch (IOException e) {
-      System.out.println("Attempt to create mil output in \"" + name + "\" failed");
-    }
-  }
-
-  /** Display a printable representation of this MIL construct on the specified PrintWriter. */
+  /** Display a printable representation of this object on the specified PrintWriter. */
   public void dump(PrintWriter out) {
     for (DefnSCCs dsccs = sccs; dsccs != null; dsccs = dsccs.next) {
       dsccs.head.dump(out);
@@ -132,12 +111,12 @@ public class MILProgram {
     out.println();
   }
 
-  /** Add a special block for aborting the program. TODO: where do we set a type for this block? */
-  public static final Block abort = new Block(BuiltinPosition.position, Temp.noTemps, Code.halt);
+  /** Add a special block for aborting the program. */
+  public static final Block abort =
+      new Block(BuiltinPosition.pos, Temp.noTemps, new Done(Prim.halt.withArgs()));
 
   public void typeChecking(Handler handler) throws Failure {
     shake();
-    // ! dump();
     for (DefnSCCs dsccs = sccs; dsccs != null; dsccs = dsccs.next) {
       dsccs.head.inferTypes(handler);
     }
@@ -153,6 +132,9 @@ public class MILProgram {
     // globals.
     for (DefnSCCs dsccs = sccs; dsccs != null; dsccs = dsccs.next) {
       dsccs.head.generateMain(handler, builder);
+    }
+    if (main != null) {
+      main.callMain(builder);
     }
     builder.stop();
 
@@ -185,30 +167,14 @@ public class MILProgram {
     count = 1;
     for (int i = 0; i < MAX_OPTIMIZE_PASSES && count > 0; i++) {
       debug.Log.println("-------------------------");
-      // !System.out.println("==================================================");
-      // !System.out.println("Step " + i);
-      // !System.out.println("==================================================");
-      // !dump();
-      // !System.out.println("==================================================");
       count = 0;
       inlining();
       debug.Log.println("Inlining pass finished, running shake.");
       shake();
-      // !System.out.println("Before lift allocators: ==========================");
-      // !dump();
       liftAllocators(); // TODO: Is this the right position for liftAllocators?
-      // !System.out.println("Before eliminateUnusedArgs: ======================");
-      // !dump();
       eliminateUnusedArgs();
       shake();
-      // !System.out.println("Before flow: =====================================");
-      // !dump();
       flow();
-      if (count == 0) { // If no changes so far this iteration, try collect.
-        shake();
-        // collapse();     // TODO: Should we do this every time anyway?
-        collect();
-      }
       debug.Log.println("Flow pass finished, running shake.");
       shake();
       debug.Log.println("Steps performed = " + count);
@@ -216,14 +182,12 @@ public class MILProgram {
     }
 
     // Final cleanup: look for opportunities to collapse duplicated definitions:
-    int postcount = 0;
     count = 1;
-    for (int i = 0; i < MAX_OPTIMIZE_PASSES && count > 0 && count != postcount; i++) {
+    for (int i = 0; i < MAX_OPTIMIZE_PASSES && count > 0 && count != 0; i++) {
       debug.Log.println("-------------------------");
       count = 0;
       collapse(); // TODO: move inside loop?
-      postcount = count;
-      collect();
+      //    collect();
       shake();
       inlining();
       shake();
@@ -232,7 +196,6 @@ public class MILProgram {
       debug.Log.println("Cleanup steps performed = " + count);
       totalCount += count;
     }
-    // while (count!=0 && count!=postcount);
     debug.Log.println("TOTAL steps performed = " + totalCount);
   }
 
@@ -317,12 +280,22 @@ public class MILProgram {
     final int SIZE = 251;
     Blocks[] blocks = new Blocks[SIZE];
     TopLevels[] topLevels = new TopLevels[SIZE];
+    ClosureDefns[] closures = new ClosureDefns[SIZE];
     boolean found = false;
 
-    // Visit each block to compute summaries and populate the table:
+    // Visit each definition to compute summaries and populate the tables:
+
+    // Start with entrypoints so that they are available to use as replacements for non-entrypoints.
+    for (Defns ds = entries; ds != null; ds = ds.next) {
+      found |= ds.head.summarizeDefns(blocks, topLevels, closures);
+    }
+
+    // Visit definitions that are not entrypoints:
     for (DefnSCCs dsccs = sccs; dsccs != null; dsccs = dsccs.next) {
       for (Defns ds = dsccs.head.getBindings(); ds != null; ds = ds.next) {
-        found |= ds.head.summarizeDefns(blocks, topLevels);
+        if (!ds.head.isEntrypoint()) {
+          found |= ds.head.summarizeDefns(blocks, topLevels, closures);
+        }
       }
     }
 
@@ -336,33 +309,7 @@ public class MILProgram {
     }
   }
 
-  /**
-   * Scan a program and simplify any blocks that are only ever called with specific values for
-   * particular parameters. In particular, this includes blocks that are only called once with one
-   * or more known parameters.
-   */
-  void collect() {
-    // Collect information about all block calls in the program:
-    for (DefnSCCs dsccs = sccs; dsccs != null; dsccs = dsccs.next) {
-      // Initialize argVals for each block in this SCC
-      for (Defns ds = dsccs.head.getBindings(); ds != null; ds = ds.next) {
-        ds.head.clearArgVals();
-      }
-
-      // Update argVals for each code fragment in this SCC:
-      for (Defns ds = dsccs.head.getBindings(); ds != null; ds = ds.next) {
-        ds.head.collect();
-      }
-    }
-
-    // Now look for places where a unique value is used for all calls to a given block:
-    for (DefnSCCs dsccs = sccs; dsccs != null; dsccs = dsccs.next) {
-      for (Defns ds = dsccs.head.getBindings(); ds != null; ds = ds.next) {
-        ds.head.checkCollection();
-      }
-    }
-  }
-
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   public void collect(TypeSet set) {
     for (DefnSCCs dsccs = sccs; dsccs != null; dsccs = dsccs.next) {
       dsccs.head.collect(set);
@@ -372,8 +319,6 @@ public class MILProgram {
   public void cfunRewrite() {
     TypeSet set = new NewtypeTypeSet();
     collect(set);
-    // ! System.out.println("TypeSet after Newtype Removal: ==========");
-    // ! set.dump();
     cfunSimplify();
   }
 
@@ -391,18 +336,17 @@ public class MILProgram {
     MILSpec spec =
         new MILSpec(); // Used to record information about generated/requested specializations
 
-    // Step 1: Generate specialized versions of each entry point:
+    // Step 1: Generate specialized versions of each entry point, and a specialized main if
+    // necessary:
     for (Defns es = entries; es != null; es = es.next) {
-      try {
-        spec.addEntry(es.head);
-      } catch (Failure f) {
-        handler.report(f);
-      }
+      spec.addEntry(handler, es.head);
     }
+    spec.addMain(handler, main);
     handler.abortOnFailures();
 
     // Step 2: Generate specialized versions of all reachable definitions:
     spec.generate();
+
     return spec;
   }
 
@@ -415,7 +359,10 @@ public class MILProgram {
     }
   }
 
-  public void bitdataRewrite(DataNames cands) {
+  public void bitdataRewrite() {
+    TypeSet set = new TypeSet();
+    collect(set);
+    DataTypes cands = set.bitdataCandidates();
     if (cands != null) {
       BitdataMap m = new BitdataMap();
       if (m.addMappings(cands) > 0) { // If any mappings were found, then rewrite the program
@@ -438,6 +385,9 @@ public class MILProgram {
     for (Defns es = entries; es != null; es = es.next) {
       es.head = es.head.makeEntryBlock();
     }
+    if (main != null) {
+      main = main.makeEntryBlock();
+    }
   }
 
   public RepTypeSet repTransform(Handler handler) throws Failure {
@@ -446,7 +396,7 @@ public class MILProgram {
     for (DefnSCCs dsccs = sccs; dsccs != null; dsccs = dsccs.next) {
       // Rewrite the left hand side of any top level definitions in this SCC:
       for (Defns ds = dsccs.head.getBindings(); ds != null; ds = ds.next) {
-        ds.head.topLevelrepTransform(handler, set);
+        ds.head.topLevelRepTransform(handler, set);
       }
 
       // Rewrite the remaining portions of any definitions in this SCC:
@@ -454,36 +404,10 @@ public class MILProgram {
         ds.head.repTransform(handler, set);
       }
     }
+    handler.abortOnFailures();
     makeEntryBlocks();
+    main = set.makeMain(main);
     return set;
-  }
-
-  private static MILEnv primEnv = null;
-
-  /** Load MIL primitive definitions from the specified filed. */
-  public static void loadPrims(Handler handler, String name) {
-    try {
-      // Load the named file (and anything it depends on):
-      MILLoader loader = new MILLoader();
-      loader.require(name);
-      MILProgram mil = new MILProgram();
-      primEnv = loader.load(handler, mil);
-      handler.abortOnFailures();
-
-      // Run basic type checking on the resulting program:
-      mil.typeChecking(handler);
-      handler.abortOnFailures();
-      // !
-      // !   mil.dump(); // Output result
-    } catch (Failure f) {
-      handler.report(f);
-      debug.Internal.error("Aborting due to errors while loading primitives from " + name);
-    }
-  }
-
-  /** Return a pointer to the set of MIL primitive definitions. */
-  public static MILEnv primEnv() {
-    return primEnv;
   }
 
   public void addArgs() throws Failure {
@@ -519,6 +443,9 @@ public class MILProgram {
     for (Defns es = entries; es != null; es = es.next) {
       es.head.called();
     }
+    if (main != null) {
+      main.countAllCalls();
+    }
 
     // Scan the full program to register any additional non-tail calls:
     for (DefnSCCs dsccs = sccs; dsccs != null; dsccs = dsccs.next) {
@@ -526,21 +453,11 @@ public class MILProgram {
         ds.head.countCalls();
       }
     }
-    // ! // Display results:
-    // ! System.out.print("CALLED :");
-    // ! for (DefnSCCs dsccs = sccs; dsccs!=null; dsccs=dsccs.next) {
-    // !   for (Defns ds=dsccs.head.getBindings(); ds!=null; ds=ds.next) {
-    // !     int calls = ds.head.getNumberCalls();
-    // !     if (calls>0) {
-    // !       System.out.print(" " + ds.head + "[" + calls + "]");
-    // !     }
-    // !   }
-    // ! }
-    // ! System.out.println();
   }
 
   /** Generate an LLVM implementation of this MIL program. */
-  public llvm.Program toLLVM() {
+  public llvm.Program toLLVM() throws Failure {
+    llvm.Type.setWord(Word.size());
     analyzeCalls();
     CFGs cfgs = null;
     llvm.Program prog = new llvm.Program();
@@ -550,7 +467,6 @@ public class MILProgram {
       for (Defns ds = dsccs.head.getBindings(); ds != null; ds = ds.next) {
         CFG cfg = ds.head.makeCFG();
         if (cfg != null) {
-          // !        cfg.display();
           TempSubst s = cfg.paramElim();
           // System.out.println(TempSubst.toString(s));
 
@@ -571,7 +487,7 @@ public class MILProgram {
         }
       }
     }
-    prog.add(generateInitFunction(lm));
+    generateInitFunction(lm, prog);
     //  CFGs.toDot("cfgs.dot", cfgs);       // TODO: should not generate this unless requested
     return prog;
   }
@@ -579,7 +495,7 @@ public class MILProgram {
   /**
    * Generate LLVM code to initialize all TopLevels in this program that do not have static values.
    */
-  llvm.FuncDefn generateInitFunction(LLVMMap lm) {
+  void generateInitFunction(LLVMMap lm, llvm.Program prog) throws Failure {
     llvm.Code code = null;
     InitVarMap ivm = new InitVarMap();
     for (DefnSCCs dsccs = sccs; dsccs != null; dsccs = dsccs.next) {
@@ -587,11 +503,31 @@ public class MILProgram {
         code = ds.head.addRevInitCode(lm, ivm, code);
       }
     }
-    return new llvm.FuncDefn(
-        llvm.Type.vd,
-        llvm.FuncDefn.mainFunctionName,
-        new llvm.Local[0],
-        new String[] {"entry"},
-        new llvm.Code[] {llvm.Code.reverseOnto(code, new llvm.RetVoid())});
+    if (!llvm.FuncDefn.mainFunctionName.equals("")) {
+      prog.add(
+          new llvm.FuncDefn(
+              llvm.Mods.NONE,
+              initType(lm),
+              llvm.FuncDefn.mainFunctionName,
+              new llvm.Local[0],
+              new String[] {"entry"},
+              new llvm.Code[] {llvm.Code.reverseOnto(code, initCode(lm, ivm))}));
+    } else if (code != null || main != null) {
+      throw new Failure(
+          "LLVM program requires initialization function (set using --llvm-main=NAME)");
+    }
+  }
+
+  /**
+   * Calculate the LLVM return type that will be produced by the code in the main Block of a
+   * program, if one has been specified.
+   */
+  llvm.Type initType(LLVMMap lm) throws Failure {
+    return (main == null) ? llvm.Type.vd : main.initType(lm);
+  }
+
+  /** Generate an LLVM code sequence from the main Block in a program, if one has been specified. */
+  llvm.Code initCode(LLVMMap lm, InitVarMap ivm) throws Failure {
+    return (main == null) ? new llvm.RetVoid() : main.initCode(lm, ivm);
   }
 }

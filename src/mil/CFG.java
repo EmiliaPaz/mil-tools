@@ -66,8 +66,8 @@ abstract class CFG extends Node {
   }
 
   /**
-   * Register a control flow edge between the specified source and destination with the given
-   * arguments.
+   * Register a control flow edge between the specified source and destination with the given (non
+   * unit) arguments.
    */
   Label edge(Node src, Block b, Atom[] args) {
     // If the target for this edge is a block that is not included in this CFG, then we need
@@ -113,6 +113,11 @@ abstract class CFG extends Node {
     }
   }
 
+  /**
+   * Calculate a parameter elimination substitution for this CFG that accounts for all of the
+   * renamings that are required when there is a control flow in to a block with a unique
+   * predecessor.
+   */
   TempSubst paramElim() {
     TempSubst s = null;
     for (Labels ls = labels; ls != null; ls = ls.next) {
@@ -121,28 +126,28 @@ abstract class CFG extends Node {
     return s;
   }
 
-  abstract llvm.FuncDefn toLLVMFuncDefn(LLVMMap lm, DefnVarMap dvm, TempSubst s);
-
-  /**
-   * Generate an LLVM function definition with the labeled blocks of Code in this CFG as its body.
-   */
-  llvm.FuncDefn toLLVMBody(
-      LLVMMap lm,
-      VarMap vm,
-      TempSubst s,
-      llvm.Type retType,
-      llvm.Local[] formals,
-      llvm.Code entryCode) {
+  /** Generate an LLVM function definition for this CFG node. */
+  llvm.FuncDefn toLLVMFuncDefn(LLVMMap lm, DefnVarMap dvm, TempSubst s) {
+    llvm.Local[] formals = formals(lm, dvm);
     int n = Labels.length(labels);
     String[] ss = new String[1 + n];
     llvm.Code[] cs = new llvm.Code[1 + n];
     ss[0] = "entry";
-    cs[0] = entryCode;
     int i = 1;
     for (Labels ls = labels; ls != null; ls = ls.next) {
       ss[i] = ls.head.label();
-      cs[i++] = ls.head.toLLVMLabel(lm, vm, s);
+      cs[i++] = ls.head.toLLVMLabel(lm, dvm, s);
     }
-    return new llvm.FuncDefn(retType, label(), formals, ss, cs);
+    return toLLVMFuncDefn(lm, dvm, s, formals, ss, cs);
   }
+
+  /** Calculate an array of formal parameters for the associated LLVM function definition. */
+  abstract llvm.Local[] formals(LLVMMap lm, DefnVarMap dvm);
+
+  /**
+   * Helper function for constructing a function definition with the fiven formal parameters and
+   * code by connecting the the associated MIL Defn for additional details.
+   */
+  abstract llvm.FuncDefn toLLVMFuncDefn(
+      LLVMMap lm, DefnVarMap dvm, TempSubst s, llvm.Local[] formals, String[] ss, llvm.Code[] cs);
 }

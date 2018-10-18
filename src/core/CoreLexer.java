@@ -31,7 +31,6 @@ public class CoreLexer extends SourceLexer implements CoreTokens {
   public CoreLexer(Handler handler, Source source) {
     super(handler, source);
     reserved = new HashMap<String, Integer>();
-    // !System.out.println("Reading from " + source.describe());
     reserved.put("=", new Integer(EQ));
     reserved.put("::", new Integer(COCO));
     reserved.put("|", new Integer(BAR));
@@ -47,6 +46,7 @@ public class CoreLexer extends SourceLexer implements CoreTokens {
     reserved.put("area", new Integer(AREA));
     reserved.put("struct", new Integer(STRUCT));
     reserved.put("bitdata", new Integer(BITDATA));
+    reserved.put("aligned", new Integer(ALIGNED));
     reserved.put("case", new Integer(CASE));
     reserved.put("of", new Integer(OF));
     reserved.put("if", new Integer(IF));
@@ -124,6 +124,8 @@ public class CoreLexer extends SourceLexer implements CoreTokens {
         return "\"struct\" keyword";
       case BITDATA:
         return "\"bitdata\" keyword";
+      case ALIGNED:
+        return "\"aligned\" keyword";
       case CASE:
         return "\"case\" keyword";
       case OF:
@@ -144,11 +146,6 @@ public class CoreLexer extends SourceLexer implements CoreTokens {
 
   /** Read the next token and return the corresponding integer code. */
   public int nextToken() {
-    // !int foo = hidden();
-    // !System.out.println("Token = " + foo);
-    // !return foo;
-    // !}
-    // !public int hidden() {
     for (; ; ) {
       skipWhitespace();
       markPosition();
@@ -190,8 +187,20 @@ public class CoreLexer extends SourceLexer implements CoreTokens {
           return token = SEMI;
 
         case '\"':
-          if (stringLiteral()) {
+          try {
+            lexemeText = stringLiteral();
             return token = STRLIT;
+          } catch (Failure f) {
+            report(f);
+          }
+          break;
+
+        case '\'':
+          try {
+            charLiteral();
+            return token = NATLIT;
+          } catch (Failure f) {
+            report(f);
           }
           break;
 
@@ -290,43 +299,58 @@ public class CoreLexer extends SourceLexer implements CoreTokens {
       if (c == 'x' || c == 'X') {
         nextChar();
         digits("hexadecimal literal", 16);
-        lexemeText = line.substring(start, col);
+        multiplier();
         return token = NATLIT;
       } else if (c == 'o' || c == 'O') {
         nextChar();
         digits("octal literal", 8);
-        lexemeText = line.substring(start, col);
+        multiplier();
         return token = NATLIT;
       } else if (c == 'b' || c == 'B') {
         nextChar();
         digits("binary literal", 2);
-        lexemeText = line.substring(start, col);
+        multiplier();
         return token = NATLIT;
       } else if (Character.digit((char) c, 10) < 0) { // just a zero
-        smallNat = 0;
-        bigNat = bigD[0];
-        lexemeText = line.substring(start, col);
+        nat = bigD[0];
         return token = NATLIT;
       }
     }
     digits("numeric literal", 10); // read decimal prefix
-    lexemeText = line.substring(start, col);
+    multiplier();
     return token = NATLIT;
   }
 
-  private int smallNat;
+  private BigInteger nat;
 
-  public int getSmallNat() {
-    if (smallNat < 0) {
-      report(new Failure(getPos(), "Numeric constant out of range (too large)"));
-    }
-    return smallNat;
+  /** Return the most recently recognized numeric literal value as a BigInteger. */
+  public BigInteger getNat() {
+    return nat;
   }
 
-  private BigInteger bigNat;
+  /**
+   * Return the most recently recognized literal as an int, or throw an exception if the value is
+   * out of range.
+   */
+  public int getInt() throws Failure {
+    if (nat.compareTo(MAX_INT) > 0) {
+      throw new Failure(getPos(), "Literal is too large (limit is " + MAX_INT + ")");
+    }
+    return nat.intValue();
+  }
 
-  public BigInteger getBigNat() {
-    return bigNat;
+  /** A BigInteger for the largest positive value that can be represented by a (signed) int. */
+  public static final BigInteger MAX_INT = BigInteger.valueOf(Integer.MAX_VALUE);
+
+  /**
+   * Return the most recently recognized literal as a Word, or throw an exception if the value is
+   * out of range.
+   */
+  public long getWord() throws Failure {
+    if (nat.compareTo(Word.maxUnsigned()) > 0) {
+      throw new Failure(getPos(), "Literal is too large (limit is " + Word.maxUnsigned() + ")");
+    }
+    return nat.longValue();
   }
 
   private static BigInteger[] bigD = new BigInteger[17];
@@ -374,110 +398,183 @@ public class CoreLexer extends SourceLexer implements CoreTokens {
   }
 
   /**
-   * Recognize a sequence of one or more digits of a particular radix, setting bigNat to the
-   * corresponding numeric value. A (-1) in smallNat indicates overflow.
+   * Recognize a sequence of one or more digits of a particular radix, setting nat to the
+   * corresponding numeric value.
    */
   private void digits(String where, int radix) {
     int count = 0;
-    smallNat = 0;
-    bigNat = bigD[0];
+    nat = bigD[0];
 
     // Read main digit sequence:
     for (; ; ) {
       int d = Character.digit((char) c, radix);
       if (d >= 0) { // valid digit?
         count++;
-        if (smallNat >= 0) {
-          smallNat = (smallNat > ((Integer.MAX_VALUE - d) / radix)) ? (-1) : (d + smallNat * radix);
-        }
-        bigNat = bigNat.multiply(bigD[radix]).add(bigD[d]);
+        nat = nat.multiply(bigD[radix]).add(bigD[d]);
       } else if (c != '_') { // skip underscore inside an integer literal
         break;
       }
       nextChar();
     }
 
-    // Look for a digit that does not fit the specified radix so that we can provide a more
-    // intelligible
-    // error message.
-    if (radix < 16 && Character.digit((char) c, 16) >= 0) {
-      report(new Failure(getPos(), "Invalid digit, \'" + (char) c + "\', in " + where));
-      for (; ; ) { // Skip additional trailing (potential) digits
-        if (Character.digit((char) c, 16) >= 0) {
-          count++;
-        } else if (c != '_') {
-          break;
-        }
-        nextChar();
-      }
-    }
-
     // Literals must contain at least one digit (after any prefix)!
     if (count == 0) {
       report(new Failure(getPos(), "Missing digits for " + where));
     }
+  }
 
+  private void multiplier() {
     // Look for a trailing power of two multiplier:
-    int bits = 0;
     if (c == 'K') {
-      bits = 10;
-      bigNat = bigNat.multiply(kb);
+      nat = nat.multiply(kb);
     } else if (c == 'M') {
-      bits = 20;
-      bigNat = bigNat.multiply(mb);
+      nat = nat.multiply(mb);
     } else if (c == 'G') {
-      bits = 30;
-      bigNat = bigNat.multiply(gb);
+      nat = nat.multiply(gb);
     } else if (c == 'T') {
-      bits = 40;
-      bigNat = bigNat.multiply(tb);
+      nat = nat.multiply(tb);
     } else {
       return;
     }
-    smallNat =
-        (bits >= Integer.SIZE || smallNat < 0 || smallNat > (Integer.MAX_VALUE >> bits))
-            ? (-1)
-            : (smallNat << bits);
     nextChar();
   }
 
-  private boolean stringLiteral() { // Assumes c=='\"'
+  private String stringLiteral() throws Failure { // Assumes c=='\"'
     nextChar();
     StringBuilder buf = new StringBuilder();
     for (; ; ) {
       if (c == '\"') {
-        lexemeText = buf.toString();
         nextChar();
-        return true;
+        return buf.toString();
       } else if (c == EOL || c == EOF) {
-        report(new Failure(getPos(), "Unterminated String literal"));
-        return false;
+        throw new Failure(getPos(), "Unterminated String literal");
       } else if (c == '\\') {
-        nextChar();
-        switch (c) {
-          case '\\':
-            buf.append('\\');
-            break;
-          case '\"':
-            buf.append('\"');
-            break;
-          case 'n':
-            buf.append('\n');
-            break;
-          case 't':
-            buf.append('\t');
-            break;
-          default:
-            report(new Failure(getPos(), "Invalid escape character"));
-            return false;
+        if (nextChar() == '&') {
+          nextChar();
+        } else if (isWhitespace(c) || c == EOL) {
+          skipWhitespace(); // skip gap
+          if (c == '\\') {
+            nextChar();
+          } else {
+            throw new Failure(getPos(), "Missing backslash at the end of gap");
+          }
+        } else {
+          buf.append((char) escapeChar());
         }
-        nextChar();
       } else {
         buf.append((char) c);
         nextChar();
       }
     }
   }
+
+  private void charLiteral() throws Failure { // Assumes c=='\''
+    int val = nextChar();
+    if (c == '\\') {
+      nextChar();
+      val = escapeChar();
+    } else if (c == '\'' || c == EOL || c == EOF) {
+      throw new Failure(getPos(), "Syntax error in character literal");
+    } else {
+      nextChar();
+    }
+    if (c == '\'') {
+      nextChar();
+    } else {
+      throw new Failure(getPos(), "Missing ' (close quote) on character literal");
+    }
+    nat = BigInteger.valueOf(val);
+  }
+
+  private int escapeChar() throws Failure { // Assumes initial '\\' has been skipped already
+    switch (c) {
+      case 'o':
+        nextChar();
+        digits("octal character escape", 8);
+        return getInt();
+
+      case 'x':
+        nextChar();
+        digits("hexadecimal character escape", 16);
+        return getInt();
+
+      case '^':
+        {
+          int v = "@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_".indexOf(nextChar());
+          if (v < 0) {
+            throw new Failure(getPos(), "Missing control character in \\^ escape");
+          }
+          nextChar();
+          return v;
+        }
+
+      default:
+        if (Character.digit((char) c, 10) >= 0) {
+          digits("decimal character escape", 10);
+          return getInt();
+        }
+        for (int i = 0; i < escCodes.length; i++) {
+          String str = escCodes[i];
+          int len = str.length() - 2; // subtract one for init char, one for space
+          if (str.regionMatches(2, line, col, len)) {
+            nextChar(len);
+            return str.charAt(0);
+          }
+        }
+        throw new Failure(getPos(), "Unrecognized character escape");
+    }
+  }
+
+  private static final String[] escCodes =
+      new String[] {
+        // charesc
+        "\007 a",
+        "\010 b",
+        "\014 f",
+        "\012 n",
+        "\015 r",
+        "\011 t",
+        "\\ \\",
+        "\" \"",
+        "\' \'",
+        "\013 v",
+
+        // ascii
+        "\000 NUL",
+        "\001 SOH",
+        "\002 STX",
+        "\003 ETX",
+        "\004 EOT",
+        "\005 ENQ",
+        "\006 ACK",
+        "\007 BEL",
+        "\010 BS",
+        "\011 HT",
+        "\012 LF",
+        "\013 VT",
+        "\014 FF",
+        "\015 CR",
+        "\016 SO",
+        "\017 SI",
+        "\020 DLE",
+        "\021 DC1",
+        "\022 DC2",
+        "\023 DC3",
+        "\024 DC4",
+        "\025 NAK",
+        "\026 SYN",
+        "\027 ETB",
+        "\030 CAN",
+        "\031 EM",
+        "\032 SUB",
+        "\033 ESC",
+        "\034 FS",
+        "\035 GS",
+        "\036 RS",
+        "\037 US",
+        "\040 SP",
+        "\177 DEL"
+      };
 
   private int identifier(int start) { // Assumes isJavaIdentifierStart(c)
     token = Character.isUpperCase(c) ? CONID : VARID;
@@ -506,7 +603,7 @@ public class CoreLexer extends SourceLexer implements CoreTokens {
   /**
    * Test to determine whether a given identifier represents a bit vector literal. If the result is
    * true, then the width (total number of bits) is placed in numBits and the value is placed in
-   * bigNat.
+   * nat.
    */
   private boolean isBitLiteral(String s) {
     int width;
@@ -526,14 +623,14 @@ public class CoreLexer extends SourceLexer implements CoreTokens {
 
     int radix = 1 << width;
     numBits = 0;
-    bigNat = bigD[0];
+    nat = bigD[0];
     int l = s.length();
     for (int i = 1; i < l; i++) {
       char c = s.charAt(i);
       int d = Character.digit(c, radix);
       if (d >= 0) {
         numBits += width;
-        bigNat = bigNat.multiply(bigD[radix]).add(bigD[d]);
+        nat = nat.multiply(bigD[radix]).add(bigD[d]);
       } else if (c != '_') {
         return false;
       }

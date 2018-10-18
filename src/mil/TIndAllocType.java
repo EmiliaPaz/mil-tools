@@ -19,8 +19,6 @@
 package mil;
 
 import compiler.*;
-import compiler.Failure;
-import compiler.Position;
 import core.*;
 import obdd.Pat;
 
@@ -48,29 +46,8 @@ class TIndAllocType extends AllocType {
     return result.with(tenv);
   }
 
-  void storedUnifiesWith(Position pos, Type[] inputs) throws Failure {
-    storedUnifiesWith(pos, tenv, inputs);
-  }
-
-  void resultUnifiesWith(Position pos, Type type) throws Failure {
-    result.unify(pos, tenv, type, null);
-  }
-
-  TVars tvars(TVars tvs) {
-    return tvars(tenv, tvs);
-  }
-
-  /**
-   * Generalize this monomorphic AllocType to a polymorphic type using the specified list of generic
-   * variables.
-   */
-  public AllocType generalize(TVar[] generics) {
-    return generalize(generics, tenv);
-  }
-
-  /** Return the bit pattern for the ith stored component of this AllocType. */
-  Pat bitPat(int i) {
-    return stored[i].bitPat(tenv);
+  Type[] tenv() {
+    return tenv;
   }
 
   /** Calculate a new version of this allocator type with canonical components. */
@@ -84,5 +61,10 @@ class TIndAllocType extends AllocType {
 
   boolean resultMatches(Type inst) {
     return result.match(tenv, inst, null);
+  }
+
+  /** Return the bit pattern for the ith stored component of this AllocType. */
+  Pat bitPat(int i) {
+    return stored[i].bitPat(tenv);
   }
 }

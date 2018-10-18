@@ -42,7 +42,7 @@ public class BlockCall extends Call {
     this.args = args;
   }
 
-  /** Test to see if two Tail expressions are the same. */
+  /** Test if two Tail expressions are the same. */
   public boolean sameTail(Tail that) {
     return that.sameBlockCall(this);
   }
@@ -57,11 +57,8 @@ public class BlockCall extends Call {
   }
 
   /** Display a printable representation of this MIL construct on the specified PrintWriter. */
-  public void dump(PrintWriter out) {
-    dump(out, b.toString(), "[", args, "]");
-    if (callx != null) {
-      Call.dump(out, callx);
-    }
+  public void dump(PrintWriter out, Temps ts) {
+    dump(out, b.toString(), "[", args, "]", ts);
   }
 
   /** Construct a new Call value that is based on the receiver, without copying the arguments. */
@@ -166,38 +163,26 @@ public class BlockCall extends Call {
   }
 
   BlockCall deriveWithKnownCons(Call[] calls) {
-    // !System.out.print("deriveWithKnownCons for BlockCall: ");
-    // !this.dump();
-    // !System.out.println();
     if (calls.length != args.length) {
       debug.Internal.error("BlockCall argument list length mismatch in deriveWithKnownCons");
     }
     Block nb = b.deriveWithKnownCons(calls);
     if (nb == null) {
-      // !System.out.println("Declined to specialize this block!");
       return null;
     } else {
-      // !System.out.print("Rewriting knownCons call:");
-      // !this.dump();
       return new BlockCall(nb, specializedArgs(calls));
     }
   }
 
   /** Generate a new version of a block call that omits duplicate arguments. */
   public BlockCall deriveWithDuplicateArgs(int[] dups) {
-    // !System.out.print("deriveWithDuplicateArgs for BlockCall: ");
-    // !this.dump();
-    // !System.out.println();
     if (dups.length != args.length) {
       debug.Internal.error("argument list length mismatch in deriveWithDuplicateArgs");
     }
     Block nb = b.deriveWithDuplicateArgs(dups);
     if (nb == null) {
-      // !System.out.println("Declined to specialize this block!");
       return null;
     } else {
-      // !System.out.print("Rewriting block call with duplicated arguments: ");
-      // !this.dump();
       return new BlockCall(nb, removeDuplicateArgs(dups));
     }
   }
@@ -281,11 +266,11 @@ public class BlockCall extends Call {
   }
 
   /**
-   * A simple test for MIL code fragments that return a known FlagConst, returning either the
-   * constant or null.
+   * A simple test for MIL code fragments that return a known Flag, returning either the constant or
+   * null.
    */
-  FlagConst returnsFlagConst() {
-    return args.length == 0 ? b.returnsFlagConst() : null;
+  Flag returnsFlag() {
+    return args.length == 0 ? b.returnsFlag() : null;
   }
 
   public Code rewrite(Facts facts) {
@@ -315,31 +300,16 @@ public class BlockCall extends Call {
       if (bc1 != null) {
         bc = bc1;
         MILProgram.report("deriving specialized block for BlockCall to block " + b.getId());
-        // !System.out.print("deriveWithKnownCons for BlockCall: ");
-        // !this.dump();
-        // !System.out.print(" -> ");
-        // !bc.dump();
-        // !System.out.println();
       }
     }
 
     // Look for an opportunity to simplify a BlockCall with duplicate arguments.
     int[] dups = bc.hasDuplicateArgs();
     if (dups != null) {
-      // !System.out.print("Found duplicate args pattern ");
-      // !Block.printDups(dups);
-      // !System.out.print(" for blockCall ");
-      // !bc.dump();
-      // !System.out.println();
       BlockCall bc1 = bc.deriveWithDuplicateArgs(dups);
       if (bc1 != null) {
         bc = bc1;
         MILProgram.report("eliminating duplicate args in call within " + b.getId());
-        // !System.out.print("rewriteBlockCall using deriveWithDuplicateArgs: ");
-        // !this.dump();
-        // !System.out.print(" -> ");
-        // !bc.dump();
-        // !System.out.println();
       }
     }
 
@@ -347,6 +317,12 @@ public class BlockCall extends Call {
   }
 
   private Call[] callx;
+
+  public void dump(PrintWriter out) {
+    if (callx != null) {
+      Call.dump(out, callx);
+    }
+  }
 
   BlockCall shortCase(Facts facts) {
     return b.shortCase(args, facts);
@@ -371,17 +347,13 @@ public class BlockCall extends Call {
   }
 
   void eliminateDuplicates() {
-    Block c = b.getReplaceWith();
-    if (c != null) {
-      args = c.replaceArgs(b, args);
-      b = c;
+    Block b1 = b.getReplaceWith();
+    if (b1 != null) {
+      b = b1;
     }
   }
 
-  void collect() {
-    b.collect(args);
-  }
-
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     if (type != null) {
       type = type.canonBlockType(set);
@@ -423,6 +395,15 @@ public class BlockCall extends Call {
   }
 
   /**
+   * Count the number of calls to blocks, both regular and tail calls, in this abstract syntax
+   * fragment. This is suitable for counting the calls in the main function; unlike countCalls, it
+   * does not skip tail calls at the end of a code sequence.
+   */
+  void countAllCalls() {
+    b.called();
+  }
+
+  /**
    * Search this fragment of MIL code for tail calls, adding new blocks that should be included in
    * the code for a current function to the list bs.
    */
@@ -446,24 +427,36 @@ public class BlockCall extends Call {
 
   /** Find the CFG successor for this item. */
   Label findSucc(CFG cfg, Node src) {
-    return cfg.edge(src, b, args);
+    return cfg.edge(src, b, Atom.nonUnits(args));
   }
 
-  /** Generate LLVM code to execute this Tail in tail call position. */
+  /** Generate LLVM code to execute this Tail in tail call position (i.e., as part of a Done). */
   llvm.Code toLLVMDone(LLVMMap lm, VarMap vm, TempSubst s, Label[] succs) {
-    return new llvm.Goto(succs[0].label());
+    // We allow for a null/empty list of successors to handle the possibility of a BlockCall at the
+    // end of the main function.
+    return (succs == null || succs.length == 0)
+        ? super.toLLVMDone(lm, vm, s, succs)
+        : new llvm.Goto(succs[0].label());
   }
 
-  /** Generate LLVM code to execute this Tail with NO result from the right hand side of a Bind. */
-  llvm.Code toLLVMContVoid(LLVMMap lm, VarMap vm, TempSubst s, llvm.Code c) {
-    return new llvm.CallVoid(lm.globalFor(b), Atom.toLLVMValues(lm, vm, s, args), c);
+  /**
+   * Generate LLVM code to execute this Tail with NO result from the right hand side of a Bind. Set
+   * isTail to true if the code sequence c is an immediate ret void instruction.
+   */
+  llvm.Code toLLVMBindVoid(LLVMMap lm, VarMap vm, TempSubst s, boolean isTail, llvm.Code c) {
+    return new llvm.CallVoid(isTail, lm.globalFor(b), Atom.toLLVMValues(lm, vm, s, args), c);
   }
 
   /**
    * Generate LLVM code to execute this Tail and return a result from the right hand side of a Bind.
+   * Set isTail to true if the code sequence c will immediately return the value in the specified
+   * lhs.
    */
-  llvm.Code toLLVMContBind(LLVMMap lm, VarMap vm, TempSubst s, llvm.Local lhs, llvm.Code c) {
+  llvm.Code toLLVMBindCont(
+      LLVMMap lm, VarMap vm, TempSubst s, boolean isTail, llvm.Local lhs, llvm.Code c) {
     return new llvm.Op(
-        lhs, new llvm.Call(lhs.getType(), lm.globalFor(b), Atom.toLLVMValues(lm, vm, s, args)), c);
+        lhs,
+        new llvm.Call(isTail, lhs.getType(), lm.globalFor(b), Atom.toLLVMValues(lm, vm, s, args)),
+        c);
   }
 }

@@ -93,21 +93,24 @@ public class Block extends Defn {
     return "style=filled, fillcolor=lightblue";
   }
 
-  void displayDefn(PrintWriter out, boolean isEntrypoint) {
+  /** Display a printable representation of this definition on the specified PrintWriter. */
+  /** Display a printable representation of this definition on the specified PrintWriter. */
+  void dump(PrintWriter out, boolean isEntrypoint) {
     if (declared != null) {
       if (isEntrypoint) {
-        out.print("export ");
+        out.print("entrypoint ");
       }
       out.println(id + " :: " + declared);
     }
 
-    Call.dump(out, id, "[", params, "]");
+    Temps ts = renameTemps ? Temps.push(params, null) : null;
+    Call.dump(out, id, "[", params, "]", ts);
     out.println(" =");
     if (code == null) {
       Code.indent(out);
       out.println("null");
     } else {
-      code.dump(out);
+      code.dump(out, ts);
     }
   }
 
@@ -137,7 +140,7 @@ public class Block extends Defn {
   }
 
   /**
-   * Type check the body of this definition, but reporting rather than throwing' an exception error
+   * Type check the body of this definition, but reporting rather than throwing an exception error
    * if the given handler is not null.
    */
   void checkBody(Handler handler) throws Failure {
@@ -168,23 +171,15 @@ public class Block extends Defn {
   /** Lists the generic type variables for this definition. */
   protected TVar[] generics = TVar.noTVars;
 
-  /** Produce a printable description of the generic variables for this definition. */
-  public String showGenerics() {
-    return TVar.show(generics);
-  }
-
   void generalizeType(Handler handler) throws Failure {
-    // !   debug.Log.println("Generalizing definition for: " + getId());
     if (defining != null) {
       TVars gens = defining.tvars();
       generics = TVar.generics(gens, null);
-      // !     debug.Log.println("generics: " + showGenerics());
       BlockType inferred = defining.generalize(generics);
       debug.Log.println("Inferred " + id + " :: " + inferred);
-      if (declared == null) {
-        declared = inferred;
-      } else if (!declared.alphaEquiv(inferred)) {
+      if (declared != null && !declared.alphaEquiv(inferred)) {
         throw new Failure(
+            pos,
             "Declared type \""
                 + declared
                 + "\" for \""
@@ -192,6 +187,8 @@ public class Block extends Defn {
                 + "\" is more general than inferred type \""
                 + inferred
                 + "\"");
+      } else {
+        declared = inferred;
       }
       findAmbigTVars(handler, gens); // search for ambiguous type variables ...
     }
@@ -209,6 +206,13 @@ public class Block extends Defn {
               + defining
               + " with ambiguous type variables "
               + extras);
+    }
+  }
+
+  /** Generate code to invoke the main definition, if it is a block with no parameters. */
+  void callMain(MachineBuilder builder) {
+    if (params.length == 0) {
+      builder.call(0, this);
     }
   }
 
@@ -252,8 +256,6 @@ public class Block extends Defn {
     Block b = new BlockWithEnter(pos, nps, null);
     derived = new Blocks(b, derived);
     b.code = code.deriveWithEnter(iargs);
-    // !System.out.println("Derived block is:");
-    // !b.displayDefn();
     return b;
   }
 
@@ -285,8 +287,6 @@ public class Block extends Defn {
     Block b = new BlockWithCont(pos, nps, null);
     derived = new Blocks(b, derived);
     b.code = code.deriveWithCont(arg);
-    // !System.out.println("Derived block is:");
-    // !b.displayDefn();
     return b;
   }
 
@@ -304,11 +304,6 @@ public class Block extends Defn {
   }
 
   public Block deriveWithKnownCons(Call[] calls) {
-    // !System.out.println("Looking for derive with Known Cons ");
-    // !Call.dump(calls);
-    // !System.out.println(" for the Block");
-    // !this.dump();
-    // !System.out.println();
 
     // Do not create a specialized version of a simple block (i.e., a block that contains only a
     // single Done):
@@ -316,28 +311,22 @@ public class Block extends Defn {
     // System.out.println("Will not specialize this block: code is a single tail");
     //      return null;
     //  }
-    // !code.dump();
 
     // TODO: this test is disabled, which results in more aggressive inlining that, so
     // far, appears to be a good thing :-)  Consider removing this test completely ... ?
     //  if (this instanceof BlockWithKnownCons) {
-    // !System.out.println("Will not specialize this block: starting point is a derived block");
     //      return null;
     //  }
-
-    // !if (calls!=null) return null; // disable deriveWithKnownCons
 
     // Look to see if we have already derived a suitable version of this block:
     for (Blocks bs = derived; bs != null; bs = bs.next) {
       if (bs.head.hasKnownCons(calls)) {
-        // !System.out.println("Found a previous occurrence");
         // Return pointer to previous occurrence, or decline the request to specialize
         // the block if the original block already has the requested allocator pattern.
         return (this == bs.head) ? null : bs.head;
       }
     }
 
-    // !System.out.println("Generating a new block");
     // Generate a fresh block; unlike the case for trailing Enter, we're only going to create one
     // block here
     // whose code is the same as the original block except that it adds a group of one or more
@@ -359,9 +348,8 @@ public class Block extends Defn {
 
     // Fill in the code for the new block by prepending some initializers:
     b.code = addInitializers(calls, params, tss, code.copy());
+    b.flow(); // perform an initial flow analysis to inline initializers.
 
-    // !System.out.println("New deriveWithKnownCons block:");
-    // !b.displayDefn();
     return b;
   }
 
@@ -373,22 +361,15 @@ public class Block extends Defn {
     if (dups == null) {
       debug.Internal.error("null argument for deriveWithDuplicateArgs");
     }
-    // !System.out.print("Looking for derive with Duplicate Arguments ");
-    // !printDups(dups);
-    // !System.out.println(" for the Block");
-    // !this.dump();
-    // !System.out.println();
 
     // Look to see if we have already derived a suitable version of this block:
     for (Blocks bs = derived; bs != null; bs = bs.next) {
       if (bs.head.hasDuplicateArgs(dups)) {
-        // !System.out.println("Found a previous occurrence");
         // Return pointer to previous occurrence:
         return bs.head;
       }
     }
 
-    // !System.out.println("Generating a new block");
     // Count the number of duplicate params to remove so that we can determine
     // how many formal parameters the derived block should have.
     int numDups = 0;
@@ -420,8 +401,6 @@ public class Block extends Defn {
     Block b = new BlockWithDuplicateArgs(pos, nps, code.forceApply(s), dups);
     // TODO: should we set a declared type for b if this block has one?
     derived = new Blocks(b, derived);
-    // !System.out.println("New deriveWithDuplicateArgs block:");
-    // !b.displayDefn();
     return b;
   }
 
@@ -473,32 +452,25 @@ public class Block extends Defn {
     return false; // no change
   }
 
-  /** Perform pre-inlining cleanup on each Block in this SCC. */
-  void cleanup() {
-    code = code.cleanup(this);
-  }
-
   boolean detectLoops(Blocks visited) {
     // Check to see if this block calls code for an already visited block:
     if (Blocks.isIn(this, visited) || code.detectLoops(this, visited)) {
       MILProgram.report("detected an infinite loop in block " + getId());
-      code = new Done(PrimCall.loop);
+      code = new Done(Prim.loop.withArgs());
       return true;
     }
     return false;
   }
 
+  /** Perform pre-inlining cleanup on each Block in this SCC. */
+  void cleanup() {
+    code = code.cleanup(this);
+  }
+
   /** Apply inlining. */
   public void inlining() {
-    // !System.out.println("==================================");
-    // !System.out.println("Going to try inlining on " + getId());
-    // !displayDefn();
-    // !System.out.println();
-    if (isGotoBlock() == null) { // TODO: consider replacing with code.isDone()
+    if (isGotoBlock() == null || isEntrypoint) { // TODO: consider replacing with code.isDone()
       code = code.inlining(this);
-      // !System.out.println("And the result is:");
-      // !displayDefn();
-      // !System.out.println();
     }
   }
 
@@ -506,7 +478,7 @@ public class Block extends Defn {
 
   boolean canPrefixInline(Block src) {
     if (this.getScc() != src.getScc()) { // Restrict to different SCCs
-      int n = code.prefixInlineLength(0);
+      int n = code.prefixInlineLength();
       return n > 0 && (occurs == 1 || n <= INLINE_LINES_LIMIT);
     }
     return false;
@@ -534,19 +506,11 @@ public class Block extends Defn {
    * included in the specified src Block. A null return indicates that no inlining was performed.
    */
   Code suffixInline(Block src, Atom[] args) {
-    // !System.out.println("Should we inline:");
-    // !displayDefn();
-    // !System.out.println();
-    // !System.out.println("As part of the block:");
-    // !if (src==null) System.out.println("Null block"); else src.displayDefn();
-    // !System.out.println("?");
     if (canSuffixInline(src)) {
-      // !System.out.println("YES");
       MILProgram.report(
           "suffixInline succeeded for call to block " + getId() + " from block " + src.getId());
       return code.apply(TempSubst.extend(params, args, null));
     }
-    // !System.out.println("NO");
     return null;
   }
 
@@ -559,19 +523,11 @@ public class Block extends Defn {
     if (doesntReturn && getScc().isRecursive()) { // Avoid loopy code that doesn't return
       return false;
     } else if (occurs == 1 || code.isDone() != null) { // Inline single occurrences and trivial
-      // !System.out.println("Single occurrence!");
-      // !System.out.println("this block:");
-      // !this.displayDefn();
-      // !System.out.println("src block:");
-      // !src.displayDefn();
-      // !System.out.println("-=-=-=-=-=-");
       return true; // blocks (safe, as a result of removing loops)
     } else if (!this.guarded(src)) { // Don't inline if not guarded.
-      // !System.out.println("Not guarded!");
       return false;
     } else {
       int n = code.suffixInlineLength(0); // Inline code blocks that are short
-      // !System.out.println("inline length = " + n);
       return n > 0 && n <= INLINE_LINES_LIMIT;
     }
   }
@@ -656,7 +612,9 @@ public class Block extends Defn {
    * arguments are used.
    */
   int countUnusedArgs(Temp[] dst) {
-    if (isEntrypoint) { // treat all arguments of entrypoints as used
+    if (isEntrypoint) { // treat all entrypoint arguments as used
+      // We don't have to set numUsedArgs and usedArgs because all uses are guarded by isEntrypoint
+      // tests
       return 0;
     } else {
       int unused = dst.length - numUsedArgs; // count # of unused args
@@ -710,7 +668,11 @@ public class Block extends Defn {
    * known to be used.
    */
   Temps usedVars(Atom[] args, Temps vs) {
-    if (usedArgs != null) { // ignore this call if no args are used
+    if (isEntrypoint) { // treat all entrypoint arguments as used
+      for (int i = 0; i < args.length; i++) {
+        vs = args[i].add(vs);
+      }
+    } else if (usedArgs != null) { // ignore this call if no args are used
       for (int i = 0; i < args.length; i++) {
         if (usedArgs[i]) { // ignore this argument if the flag is not set
           vs = args[i].add(vs);
@@ -725,9 +687,7 @@ public class Block extends Defn {
    * destinations (specifically, the formal parameters of a Block or a ClosureDefn).
    */
   Temp[] removeUnusedTemps(Temp[] dsts) {
-    // ! System.out.println("In " + getId() + ": numUsedArgs=" + numUsedArgs + ", dsts.length=" +
-    // dsts.length);
-    if (numUsedArgs < dsts.length) { // Found some new, unused args
+    if (!isEntrypoint && numUsedArgs < dsts.length) { // Found some new, unused args
       Temp[] newTemps = new Temp[numUsedArgs];
       int j = 0;
       for (int i = 0; i < dsts.length; i++) {
@@ -746,7 +706,8 @@ public class Block extends Defn {
    * Update an argument list by removing unused arguments, or return null if no change is required.
    */
   Atom[] removeUnusedArgs(Atom[] args) {
-    if (numUsedArgs < args.length) { // Only rewrite if we have found some new unused arguments
+    if (!isEntrypoint
+        && numUsedArgs < args.length) { // Only rewrite if we have found some new unused arguments
       Atom[] newArgs = new Atom[numUsedArgs];
       int j = 0;
       for (int i = 0; i < args.length; i++) {
@@ -761,7 +722,7 @@ public class Block extends Defn {
 
   /** Rewrite this program to remove unused arguments in block calls. */
   void removeUnusedArgs() {
-    if (numUsedArgs < params.length) {
+    if (!isEntrypoint && numUsedArgs < params.length) {
       MILProgram.report(
           "Rewrote block "
               + getId()
@@ -782,11 +743,11 @@ public class Block extends Defn {
   }
 
   /**
-   * A simple test for MIL code fragments that return a known FlagConst, returning either the
-   * constant or null.
+   * A simple test for MIL code fragments that return a known Flag, returning either the constant or
+   * null.
    */
-  FlagConst returnsFlagConst() {
-    return code.returnsFlagConst();
+  Flag returnsFlag() {
+    return code.returnsFlag();
   }
 
   /**
@@ -816,11 +777,9 @@ public class Block extends Defn {
 
     // Build lists of parameters:
     Temps thisvars = null;
+    Temps thatvars = null;
     for (int i = 0; i < this.params.length; i++) {
       thisvars = this.params[i].add(thisvars);
-    }
-    Temps thatvars = null;
-    for (int i = 0; i < that.params.length; i++) {
       thatvars = that.params[i].add(thatvars);
     }
 
@@ -828,12 +787,12 @@ public class Block extends Defn {
     return this.code.alphaCode(thisvars, that.code, thatvars);
   }
 
-  /** Holds the most recently computed summary value for this item. */
+  /** Holds the most recently computed summary value for this definition. */
   private int summary;
 
   /**
-   * Points to a different block with equivalent code, if one has been identified. A null value
-   * indicates that there is no replacement block.
+   * Points to a different definition with equivalent code, if one has been identified. A null value
+   * indicates that there is no replacement.
    */
   private Block replaceWith = null;
 
@@ -842,40 +801,41 @@ public class Block extends Defn {
   }
 
   /**
-   * Look for a previously summarized version of this block, returning true if a duplicate was
+   * Look for a previously summarized version of this definition, returning true iff a duplicate was
    * found.
    */
-  boolean findIn(Blocks[] blocks) {
+  boolean findIn(Blocks[] table) {
     summary = code.summary();
-    // !System.out.println("Block " + getId() + " has summary " + this.summary);
-    int idx = this.summary % blocks.length;
-    if (idx < 0) idx += blocks.length;
-
-    for (Blocks bs = blocks[idx]; bs != null; bs = bs.next) {
-      if (bs.head.summary == this.summary && bs.head.alphaBlock(this)) {
-        // !System.out.println("Matching summaries for " + bs.head.getId() + " and " +
-        // this.getId());
-        // !bs.head.displayDefn();
-        // !this.displayDefn();
-        MILProgram.report("Replacing " + this.getId() + " with " + bs.head.getId());
-        this.replaceWith = bs.head;
-        return true;
-      }
-      // !System.out.println("Did not match");
+    int idx = this.summary % table.length;
+    if (idx < 0) {
+      idx += table.length;
     }
-    // First sighting of this block, add to the table:
-    this.replaceWith = null; // There is no replacement for this block
-    blocks[idx] = new Blocks(this, blocks[idx]);
-    // TODO: why not just use a standard java.util.HashMap?
+
+    for (Blocks ds = table[idx]; ds != null; ds = ds.next) {
+      if (ds.head.summary == this.summary && ds.head.alphaBlock(this)) {
+        if (isEntrypoint) { // Cannot replace an entrypoint, even though a replacement is available
+          return false;
+        } else if (ds.head.declared == null
+            || (this.declared != null && ds.head.declared.alphaEquiv(this.declared))) {
+          MILProgram.report("Replacing " + this.getId() + " with " + ds.head.getId());
+          this.replaceWith = ds.head;
+          return true;
+        }
+      }
+    }
+
+    // First sighting of this definition, add to the table:
+    this.replaceWith = null; // There is no replacement for this definition (yet)
+    table[idx] = new Blocks(this, table[idx]);
     return false;
   }
 
   /**
-   * Compute a summary for this definition (if it is a block or top-level) and then look for a
-   * previously encountered item with the same code in the given table. Return true if a duplicate
-   * was found.
+   * Compute a summary for this definition (if it is a block, top-level, or closure) and then look
+   * for a previously encountered item with the same code in the given table. Return true if a
+   * duplicate was found.
    */
-  boolean summarizeDefns(Blocks[] blocks, TopLevels[] topLevels) {
+  boolean summarizeDefns(Blocks[] blocks, TopLevels[] topLevels, ClosureDefns[] closures) {
     return findIn(blocks);
   }
 
@@ -883,45 +843,7 @@ public class Block extends Defn {
     code.eliminateDuplicates();
   }
 
-  Atom[] replaceArgs(Block b, Atom[] args) {
-    Atom[] newArgs = new Atom[this.params.length];
-    for (int i = 0, j = 0; i < this.params.length; ) {
-      newArgs[i++] = args[j++];
-    }
-    return newArgs;
-  }
-
-  void collect() {
-    code.collect();
-  }
-
-  private Atom[] argVals;
-
-  void clearArgVals() {
-    argVals = new Atom[params.length];
-  }
-
-  void collect(Atom[] args) {
-    if (args.length != argVals.length) {
-      debug.Internal.error("Argument length mismatch in collect");
-    }
-    for (int i = 0; i < args.length; i++) {
-      argVals[i] = args[i].update(argVals[i]);
-    }
-  }
-
-  void checkCollection() {
-    for (int i = 0; i < argVals.length; i++) {
-      if (argVals[i] != null) {
-        Atom known = argVals[i].isKnown();
-        if (known != null) {
-          MILProgram.report("Argument " + i + " of " + getId() + " is always " + known);
-          code = new Bind(params[i], new Return(argVals[i]), code);
-        }
-      }
-    }
-  }
-
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     if (declared != null) {
       declared = declared.canonBlockType(set);
@@ -964,7 +886,7 @@ public class Block extends Defn {
             + " :: "
             + this.declared
             + ", generics="
-            + borig.showGenerics()
+            + TVar.show(borig.generics)
             + ", substitution="
             + s);
     this.params = Temp.specialize(s, borig.params);
@@ -978,12 +900,13 @@ public class Block extends Defn {
    * version to share the same name as the original).
    */
   Defn specializeEntry(MILSpec spec) throws Failure {
-    if (declared.isQuantified()) {
-      throw new PolymorphicEntrypointFailure("block", this);
+    BlockType bt = declared.isMonomorphic();
+    if (bt != null) {
+      Block b = spec.specializedBlock(this, bt);
+      b.id = this.id; // use the same name as in the original program
+      return b;
     }
-    Block b = spec.specializedBlock(this, declared);
-    b.id = this.id; // use the same name as in the original program
-    return b;
+    throw new PolymorphicEntrypointFailure("block", this);
   }
 
   /** Update all declared types with canonical versions. */
@@ -1008,17 +931,20 @@ public class Block extends Defn {
     declared = declared.canonBlockType(set);
   }
 
-  public static Block returnTrue = atomBlock("returnTrue", FlagConst.True);
+  Tail makeTail() throws Failure {
+    return (params.length == 0) ? new BlockCall(this, Atom.noAtoms) : super.makeTail();
+  }
 
-  public static Block returnFalse = atomBlock("returnFalse", FlagConst.False);
+  public static Block returnTrue = atomBlock("returnTrue", Flag.True);
+
+  public static Block returnFalse = atomBlock("returnFalse", Flag.False);
 
   /**
-   * Make a block of the following form that immediately returns the atom a, which could be an
-   * IntConst or a Top, but not a Temp (because that would be out of scope). b :: [] >>= [t] b[] =
-   * return a
+   * Make a block of the following form that immediately returns the atom a, which could be an Word
+   * or a Top, but not a Temp (because that would be out of scope). b :: [] >>= [t] b[] = return a
    */
   public static Block atomBlock(String name, Atom a) {
-    return new Block(BuiltinPosition.position, name, Temp.noTemps, new Done(new Return(a)));
+    return new Block(BuiltinPosition.pos, name, Temp.noTemps, new Done(new Return(a)));
   }
 
   /**
@@ -1043,7 +969,6 @@ public class Block extends Defn {
    * each subsequent call.
    */
   Temp[] addArgs() throws Failure {
-    // !     System.out.println("In Block " + getId());
     if (params == null) { // compute formal params on first visit
       params = Temps.toArray(code.addArgs());
     }
@@ -1083,6 +1008,15 @@ public class Block extends Defn {
   /** Count the number of non-tail calls to blocks in this abstract syntax fragment. */
   void countCalls() {
     code.countCalls();
+  }
+
+  /**
+   * Count the number of calls to blocks, both regular and tail calls, in this abstract syntax
+   * fragment. This is suitable for counting the calls in the main function; unlike countCalls, it
+   * does not skip tail calls at the end of a code sequence.
+   */
+  void countAllCalls() {
+    code.countAllCalls();
   }
 
   /**
@@ -1127,7 +1061,7 @@ public class Block extends Defn {
       for (int i = 0; i < params.length; i++) {
         nparams[i] = params[i].newParam();
       }
-      BlockCFG cfg = new BlockCFG(this, nparams);
+      BlockCFG cfg = new BlockCFG(this, Temp.nonUnits(nparams));
       cfg.initCFG();
       return cfg;
     }
@@ -1139,7 +1073,24 @@ public class Block extends Defn {
   }
 
   TempSubst mapParams(Atom[] args, TempSubst s) {
-    return TempSubst.extend(params, TempSubst.apply(args, s), s);
+    return TempSubst.extend(Temp.nonUnits(params), TempSubst.apply(args, s), s);
+  }
+
+  /**
+   * Construct a function definition with the given formal parameters and code, filling in an
+   * appropriate code sequence for the entry block in cs[0], and setting the appropriate type and
+   * internal flag values.
+   */
+  llvm.FuncDefn toLLVMFuncDefn(
+      LLVMMap lm,
+      DefnVarMap dvm,
+      TempSubst s,
+      llvm.Local[] formals,
+      String[] ss,
+      llvm.Code[] cs,
+      Label[] succs) {
+    cs[0] = dvm.loadGlobals(new llvm.Goto(succs[0].label()));
+    return new llvm.FuncDefn(llvm.Mods.entry(isEntrypoint), retType(lm), label(), formals, ss, cs);
   }
 
   /**
@@ -1152,5 +1103,20 @@ public class Block extends Defn {
 
   Temp[] getParams() {
     return params;
+  }
+
+  /**
+   * Calculate the LLVM return type that will be produced by the code in the main Block of a
+   * program, if one has been specified.
+   */
+  llvm.Type initType(LLVMMap lm) throws Failure {
+    return retType(lm);
+  }
+
+  /** Generate an LLVM code sequence from the main Block in a program, if one has been specified. */
+  llvm.Code initCode(LLVMMap lm, InitVarMap ivm) throws Failure {
+    return (params.length != 0)
+        ? super.initCode(lm, ivm)
+        : code.toLLVMCode(lm, ivm, null, Label.noLabels);
   }
 }

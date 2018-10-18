@@ -20,9 +20,11 @@ package mil;
 
 import compiler.*;
 import core.*;
-import java.io.IOException;
 import java.io.PrintWriter;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.TreeSet;
 
 public class TypeSet {
 
@@ -37,29 +39,14 @@ public class TypeSet {
    */
   private HashMap<Object, TLit> litsToTypes = new HashMap();
 
-  /** Write a description of this TypeSet on standard output (intended for debugging). */
-  public void dump() {
-    PrintWriter out = new PrintWriter(System.out);
-    dump(out);
-    out.flush();
-  }
-
-  /** Write a description of this TypeSet to a named file. */
-  public void dump(String name) {
-    try {
-      PrintWriter out = new PrintWriter(name);
-      dump(out);
-      out.close();
-    } catch (IOException e) {
-      System.out.println("Attempt to create TypeSet output in \"" + name + "\" failed");
-    }
-  }
-
-  /**
-   * Worker function for preceding dump methods; writes a description of this TypeSet to a
-   * PrintWriter.
-   */
+  /** Write a description of this TypeSet to a PrintWriter. */
   public void dump(PrintWriter out) {
+    out.println("Tycon mapping: --------------------------");
+    for (DataType dt : remapDataTypes.keySet()) {
+      DataName dn = remapDataTypes.get(dt);
+      out.println("  " + dt + " --> " + dn);
+    }
+
     out.println("Tycon uses: -----------------------------");
     for (Tycon tycon : tyconInstances.keySet()) {
       out.println("Tycon: " + tycon.getId());
@@ -112,10 +99,10 @@ public class TypeSet {
    */
   private Type[] stack = new Type[10];
 
-  /** The index of the next unused slot in the stack. */
+  /** The index of the next unused stack slot. */
   private int sp = 0;
 
-  /** Push a type on to the stack, expanding it if necessary. */
+  /** Push a type on to the stack, expanding the stack if necessary. */
   protected void push(Type t) {
     if (sp >= stack.length) {
       Type[] nstack = new Type[2 * stack.length];
@@ -132,13 +119,13 @@ public class TypeSet {
     return stack[sp - n];
   }
 
-  /** Discard the specified number of entries from the top of the stack. We assume n<=sp. */
+  /** Discard the specified number of entries from the top of the stack. Assumes n<=sp. */
   protected void drop(int n) {
     sp -= n;
   }
 
   /**
-   * Pop the specified number of arguments from the stack, and store them in a new array. We assume
+   * Pop the specified number of arguments from the stack, and store them in a new array. Assumes
    * n<=sp.
    */
   protected Type[] pop(int n) {
@@ -161,14 +148,12 @@ public class TypeSet {
     Types ts = tyconInstances.get(h); // Find previous uses of this item
     Type t = findMatch(args, ts); // And search for a match
     if (t == null) {
-      t = buildCanon(h, args); // If none found, build a canonical representative
+      t =
+          rebuild(
+              h.canonTycon(this).asType(), args); // If none found, build a canonical representative
       tyconInstances.put(h, new Types(t, ts)); // Add it to the list
     }
     return t; // Return the (old or new) canonical representative
-  }
-
-  protected Type buildCanon(Tycon h, int args) {
-    return rebuild(h.asType(), args);
   }
 
   /**
@@ -190,7 +175,7 @@ public class TypeSet {
   private Type findMatch(int args, Types ts) {
     for (; ts != null; ts = ts.next) {
       if (ts.head.matches(this, args)) {
-        sp -= args; // remove arguments
+        drop(args); // remove arguments
         return ts.head; // and return canonical version
       }
     }
@@ -248,16 +233,51 @@ public class TypeSet {
     return us;
   }
 
-  private HashMap<DataName, DataName> remapDataNames = new HashMap();
+  private HashSet<Tycon> tycons = new HashSet();
 
-  DataName getDataName(DataName dn) {
-    return remapDataNames.get(dn);
+  boolean containsTycon(Tycon tycon) {
+    return tycons.contains(tycon);
   }
 
-  void putDataName(DataName dn, DataName newDn) {
-    remapDataNames.put(dn, newDn);
+  void addTycon(Tycon tycon) {
+    tycons.add(tycon);
   }
 
+  private HashMap<DataType, DataName> remapDataTypes = new HashMap();
+
+  DataName getDataName(DataType dt) {
+    return remapDataTypes.get(dt);
+  }
+
+  void putDataName(DataType dt, DataName dn) {
+    remapDataTypes.put(dt, dn);
+  }
+
+  /** Write definitions for all the types defined in this TypeSet to a PrintWriter. */
+  public void dumpTypeDefinitions(PrintWriter out) {
+    TreeSet<Tycon> sorted =
+        new TreeSet<Tycon>(
+            new Comparator<Tycon>() {
+              // TODO: This comparator returns 0 if the two inputs are equal, but otherwise
+              // returns a code obtained by comparing the Tycon ids.  In the event that the
+              // ids are equal, it arbitrarily returns 1.  As such, this is not really a
+              // valid comparator, but it should be enough to ensure we get a sorted output
+              // without dropping any elements ...
+              public int compare(Tycon l, Tycon r) {
+                if (l.equals(r)) {
+                  return 0;
+                }
+                int c = l.getId().compareTo(r.getId());
+                return (c == 0) ? 1 : c;
+              }
+            });
+    sorted.addAll(tycons);
+    for (Tycon tycon : sorted) {
+      tycon.dumpTypeDefinition(out);
+    }
+  }
+
+  /** Cache a mapping of primitives to their canonical versions in this TypeSet. */
   private HashMap<Prim, Prim> primMap = new HashMap();
 
   Prim getPrim(Prim p) {
@@ -266,5 +286,22 @@ public class TypeSet {
 
   void putPrim(Prim p, Prim q) {
     primMap.put(p, q);
+  }
+
+  /**
+   * Build a list of all the zero arity (no parameters), nonrecursive, datatypes with one or more
+   * constructors that do not already have an associated bitSize, and might therefore be candidates
+   * for replacing with bitdata types.
+   */
+  public DataTypes bitdataCandidates() {
+    DataTypes cands = null;
+    for (Tycon tycon : tycons) {
+      DataType dt = tycon.bitdataCandidate();
+      if (dt != null) {
+        debug.Log.println("DataType " + dt + " is a candidate for bitdata representation");
+        cands = new DataTypes(dt, cands);
+      }
+    }
+    return cands;
   }
 }

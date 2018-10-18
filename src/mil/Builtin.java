@@ -79,18 +79,25 @@ public class Builtin extends MILEnvHash {
       addNewPrim(Prim.uge);
       addNewPrim(Prim.flagToWord);
       addNewPrim(Prim.halt);
-      addNewPrim(Prim.printWord);
       addNewPrim(Prim.loop);
-      addNewPrim(Prim.load);
-      addNewPrim(Prim.store);
+      addNewPrim(Prim.printWord);
+      addNewPrim(Prim.noinline);
+      addNewPrim(Prim.load1);
+      addNewPrim(Prim.load8);
+      addNewPrim(Prim.load16);
+      addNewPrim(Prim.load32);
+      addNewPrim(Prim.load64);
+      addNewPrim(Prim.store1);
+      addNewPrim(Prim.store8);
+      addNewPrim(Prim.store16);
+      addNewPrim(Prim.store32);
+      addNewPrim(Prim.store64);
+      addNewPrim(Prim.initSeq);
+      addNewPrim(Prim.initSelf);
 
     } catch (Exception e) { // Should this be a more specific exception?
       debug.Internal.error("Failed to initialize primitives");
     }
-
-    // Add definitions for load and store primitives
-    addPrim(Prim.load);
-    addPrim(Prim.store);
   }
 
   public static final Builtin obj = new Builtin();
@@ -103,7 +110,7 @@ public class Builtin extends MILEnvHash {
     if (addPrim(p) != null) {
       // TODO: it would be good to give better position information for this primitive
       // TODO: it would be good to give position information for the other definition too
-      multipleDefns(BuiltinPosition.position, "primitive", p.getId());
+      multipleDefns(BuiltinPosition.pos, "primitive", p.getId());
     }
   }
 }

@@ -51,9 +51,9 @@ class EVar extends PosExpr {
   }
 
   /**
-   * Perform a scope analysis on this expression, creating a Temp object for each variable binding,
-   * checking that all of the identifiers that it references correspond to bound variables, and
-   * returning the set of free variables in the term.
+   * Perform scope analysis on this expression, creating a Temp for each variable binding, checking
+   * that all of the identifiers it references correspond to bound variables, and returning the set
+   * of free variables in the term.
    */
   DefVars inScopeOf(Handler handler, MILEnv milenv, Env env) {
     return v.add(null);
@@ -78,7 +78,12 @@ class EVar extends PosExpr {
     if (extras != null) { // TODO: use a handler rather than an exception?
       throw new Failure(
           pos,
-          "\"" + v + "\" used at type " + type.skeleton() + " with no way to determine " + extras);
+          "\""
+              + v.getId()
+              + "\" used at type "
+              + type.skeleton()
+              + " with no way to determine "
+              + extras);
     }
   }
 
@@ -95,9 +100,20 @@ class EVar extends PosExpr {
     return (l == null) ? this : l.replacement(pos, type);
   }
 
+  /** Compile an expression into an Atom. */
+  Code compAtom(final CGEnv env, final AtomCont ka) {
+    return ka.with(v.lookup(env));
+  }
+
   /** Compile an expression into a Tail. */
-  Code compTail(final CGEnv env, final Block abort, final TailCont kt) { //  id
-    return kt.with(new Return(v.lookup(env)));
+  Code compTail(final CGEnv env, final Block abort, final TailCont kt) {
+    return this.compAtom(
+        env,
+        new AtomCont() {
+          Code with(final Atom la) {
+            return kt.with(new Return(la));
+          }
+        });
   }
 
   /** Compile a monadic expression into a Tail. */

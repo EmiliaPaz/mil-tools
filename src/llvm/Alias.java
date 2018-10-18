@@ -23,6 +23,9 @@ import java.io.PrintWriter;
 /** Represents an LLVM alias definition. */
 public class Alias extends Defn {
 
+  /** Modifiers. */
+  private int mods;
+
   /** The name of the new item. */
   private String name;
 
@@ -30,12 +33,33 @@ public class Alias extends Defn {
   private Value val;
 
   /** Default constructor. */
-  public Alias(String name, Value val) {
+  public Alias(int mods, String name, Value val) {
+    this.mods = mods;
     this.name = name;
     this.val = val;
   }
 
+  /** Print full text for this definition on the specified PrintWriter. */
   void print(PrintWriter out) {
-    out.println("@" + name + " = alias " + val.getType().ptsTo() + ", " + val);
+    out.println(
+        "@" + name + " = " + Mods.toString(mods) + "alias " + val.getType().ptsTo() + ", " + val);
+    out.println();
+  }
+
+  /**
+   * Return a boolean to indicate whether there should be any output from this definition in an LLVM
+   * interface description.
+   */
+  boolean includeInInterface() {
+    return !Mods.isLocal(mods);
+  }
+
+  /**
+   * Print interface text for this definition on the specified PrintWriter, assuming that
+   * this.includeInInterface() == true.
+   */
+  void printInterface(PrintWriter out) {
+    out.println("@" + name + " = " + Mods.toString(mods) + "alias " + val.getType().ptsTo());
+    out.println();
   }
 }

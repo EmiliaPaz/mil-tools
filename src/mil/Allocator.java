@@ -38,8 +38,6 @@ public abstract class Allocator extends Call {
         return this;
       }
     }
-    // !System.out.print("The allocator "); this.dump();
-    // !System.out.println(" is static.");
     TopLevel topLevel = new TopLevel(/*pos*/ null, new TopLhs(), this); // TODO: fix position.
     MILProgram.report("lifting static allocator to top-level " + topLevel);
     return new Return(new TopDef(topLevel, 0));
@@ -63,9 +61,6 @@ public abstract class Allocator extends Call {
   }
 
   public Tail lookupFact(TopLevel tl) {
-    // !System.out.print("REGISTER ");
-    // !this.dump();
-    // !System.out.println(" for " + top);
     this.tl = tl;
     return this;
   }
@@ -85,18 +80,19 @@ public abstract class Allocator extends Call {
    */
   llvm.Value[] calcStaticValue(LLVMMap lm, llvm.Program prog) {
     llvm.Value[] comps = null; // lazily allocated array of components
-    int n = args.length;
+    Atom[] nuargs = Atom.nonUnits(args);
+    int n = nuargs.length;
     if (n <= 0) {
       comps = new llvm.Value[1]; // leave space for the tag at index 0
     } else {
-      llvm.Value v = args[0].calcStaticValue();
+      llvm.Value v = nuargs[0].calcStaticValue();
       if (v == null) {
         return null; // if any component is unknown, then so is the full allocator
       }
       comps = new llvm.Value[1 + n]; // again, allow for tag at index 0
       comps[1] = v;
       for (int i = 1; i < n; i++) {
-        if ((comps[1 + i] = args[i].calcStaticValue()) == null) {
+        if ((comps[1 + i] = nuargs[i].calcStaticValue()) == null) {
           return null;
         }
       }
@@ -118,19 +114,14 @@ public abstract class Allocator extends Call {
       llvm.Program prog, llvm.Value[] vals, llvm.Type layoutType, llvm.Type genPtrType) {
     // Create a private constant containing all the fields for this object:
     String layoutName = prog.freshName("layout");
-    prog.add(new llvm.PrivConst(layoutName, new llvm.Struct(layoutType, vals)));
+    prog.add(new llvm.Constant(llvm.Mods.PRIVATE, layoutName, new llvm.Struct(layoutType, vals)));
     llvm.Global layoutGlobal = new llvm.Global(layoutType.ptr(), layoutName);
 
     // Create an alias that casts the specific constructor to the general type for this object:
     String valueName = prog.freshName("val");
-    prog.add(new llvm.Alias(valueName, new llvm.BitcastVal(layoutGlobal, genPtrType)));
+    prog.add(
+        new llvm.Alias(llvm.Mods.INTERNAL, valueName, new llvm.Bitcast(layoutGlobal, genPtrType)));
     return new llvm.Global(genPtrType, valueName);
-  }
-
-  /** Generate LLVM code to execute this Tail with NO result from the right hand side of a Bind. */
-  llvm.Code toLLVMContVoid(LLVMMap lm, VarMap vm, TempSubst s, llvm.Code c) {
-    debug.Internal.error("Allocator does not return void");
-    return c;
   }
 
   /**
@@ -146,12 +137,13 @@ public abstract class Allocator extends Call {
       llvm.Value tag,
       llvm.Code c) {
     // NOTE: The following steps build up the desired code in reverse order of execution
+    Atom[] nuargs = Atom.nonUnits(args);
 
     // - Save the fields in the object allocated at the address in obj:
-    int n = args.length;
+    int n = nuargs.length;
     if (n > 0) {
       while (--n >= 0) {
-        c = storeField(vm, s, obj, n + 1, args[n].toLLVMAtom(lm, vm, s), c);
+        c = storeField(vm, s, obj, n + 1, nuargs[n].toLLVMAtom(lm, vm, s), c);
       }
       c = new llvm.CodeComment("initialize other fields", c);
     }
@@ -161,19 +153,15 @@ public abstract class Allocator extends Call {
 
     // - Allocate space for a new object:
     llvm.Local past = vm.reg(objt); // pointer to first address past a c object starting at 0
-    llvm.Local size = vm.reg(llvm.Type.i32); // integer holding the size of a c object
-    llvm.Local raw = vm.reg(llvm.Type.i8.ptr()); // raw pointer to allocated object
-    llvm.Rhs call =
-        new llvm.Call(
-            raw.getType(), // a call to allocate memory
-            new llvm.Global(llvm.Type.i8, "alloc"), // TODO: fix this Global reference!
-            new llvm.Value[] {size});
+    llvm.Local size = vm.reg(llvm.Type.word()); // integer holding the size of a c object
+    llvm.Local raw = vm.reg(lm.allocRetType); // raw pointer to allocated object
+    llvm.Rhs call = new llvm.Call(lm.allocRetType, lm.allocFuncGlobal(), new llvm.Value[] {size});
 
     return new llvm.CodeComment(
         "calculate the number of bytes that we need to allocate",
         new llvm.Op(
             past,
-            new llvm.Getelementptr(new llvm.Null(objt), new llvm.Int(1)),
+            new llvm.Getelementptr(objt, new llvm.Null(objt), new llvm.Word(1)),
             new llvm.Op(
                 size,
                 new llvm.PtrToInt(past, size.getType()),
@@ -185,10 +173,11 @@ public abstract class Allocator extends Call {
   /** Generate code to execute lhs[n] = v; c */
   static llvm.Code storeField(
       VarMap vm, TempSubst s, llvm.Value lhs, int n, llvm.Value v, llvm.Code c) {
-    llvm.Local addr = vm.reg(v.getType().ptr());
+    llvm.Type at = v.getType().ptr();
+    llvm.Local addr = vm.reg(at);
     return new llvm.Op(
         addr,
-        new llvm.Getelementptr(lhs, llvm.Int.ZERO, new llvm.Int(n)),
+        new llvm.Getelementptr(at, lhs, llvm.Word.ZERO, new llvm.Word(n)),
         new llvm.Store(v, addr, c));
   }
 }

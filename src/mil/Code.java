@@ -34,15 +34,15 @@ public abstract class Code {
   /** Find the dependencies of this AST fragment. */
   public abstract Defns dependencies(Defns ds);
 
-  /** Display a printable representation of this MIL construct on the standard output. */
+  /** Display a printable representation of this object on the standard output. */
   public void dump() {
     PrintWriter out = new PrintWriter(System.out);
-    dump(out);
+    dump(out, null);
     out.flush();
   }
 
   /** Display a printable representation of this MIL construct on the specified PrintWriter. */
-  public abstract void dump(PrintWriter out);
+  public abstract void dump(PrintWriter out, Temps ts);
 
   /** Print an indent at the beginning of a line. */
   public static final void indent(PrintWriter out) {
@@ -56,19 +56,19 @@ public abstract class Code {
   }
 
   /**
-   * Apply a TempSubst to this Code sequence. This operation essentially builds a fresh copy of the
-   * original code sequence, introducing new temporaries in place of any variables introduced by
-   * Binds. As an optimization, we skip the operation if the substitution is empty.
+   * Apply a TempSubst to this Code sequence. As an optimization, skip the operation if the
+   * substitution is empty.
    */
   public Code apply(TempSubst s) {
     return (s == null) ? this : forceApply(s);
   }
 
-  /** Force the application of a TempSubst to this Code sequence. */
+  /**
+   * Force the application of a TempSubst to this Code sequence, forcing construction of a fresh
+   * copy of the input code structure, including the introduction of new temporaries in place of any
+   * variables introduced by Binds.
+   */
   public abstract Code forceApply(TempSubst s);
-
-  /** Represents a code sequence that halts/terminates the current program. */
-  public static final Code halt = new Done(PrimCall.halt);
 
   /** Calculate the list of unbound type variables that are referenced in this MIL code fragment. */
   abstract TVars tvars(TVars tvs);
@@ -135,9 +135,7 @@ public abstract class Code {
     Code c = copy(); // make a copy of this code
     Temps vs = c.liveness(); // find the free variables
     Temp[] formals = Temps.toArray(vs); // create corresponding formal parameters
-    Block b = new Block(BuiltinPosition.position, formals, c); // TODO: different position?
-    // !System.out.println("The case block is ");
-    // !b.displayDefn();
+    Block b = new Block(BuiltinPosition.pos, formals, c); // TODO: different position?
 
     // Build a closure definition: k{...} v = b[...]
     Tail t = new BlockCall(b, formals);
@@ -146,8 +144,6 @@ public abstract class Code {
             /*pos*/ null, new Temp[] {v}, t); // define a new closure // TODO: fix position
     Temp[] stored = Temps.toArray(v.removeFrom(vs));
     k.setParams(stored); // do not store v in the closure
-    // !System.out.println("The continuation definition is:");
-    // !k.displayDefn();
 
     return new ClosAlloc(k).withArgs(stored);
   }
@@ -156,6 +152,10 @@ public abstract class Code {
 
   /** Test for code that is guaranteed not to return. */
   abstract boolean doesntReturn();
+
+  boolean detectLoops(Block src, Blocks visited) {
+    return false;
+  }
 
   /**
    * Return a possibly shortened version of this code sequence by applying some simple
@@ -167,6 +167,14 @@ public abstract class Code {
   }
 
   /**
+   * Return true if this code enters a non-productive black hole (i.e., immediately calls halt or
+   * loop).
+   */
+  boolean blackholes() {
+    return false;
+  }
+
+  /**
    * Test whether a given Code/Tail value is an expression of the form return vs, with the specified
    * Temp[] vs as parameter. We also return a true result for a Tail of the form return _, where the
    * wildcard indicates that any return value is acceptable because the result will be ignored by
@@ -174,10 +182,6 @@ public abstract class Code {
    * "void functions" that do not return a useful result.
    */
   boolean isReturn(Temp[] vs) {
-    return false;
-  }
-
-  boolean detectLoops(Block src, Blocks visited) {
     return false;
   }
 
@@ -205,6 +209,10 @@ public abstract class Code {
   Code prefixInline(TempSubst s, Temp[] us, Code d) {
     debug.Internal.error("This code cannot be inlined");
     return this;
+  }
+
+  int prefixInlineLength() {
+    return prefixInlineLength(0);
   }
 
   int prefixInlineLength(int len) {
@@ -259,10 +267,10 @@ public abstract class Code {
   public abstract Code flow(Facts facts, TempSubst s);
 
   /**
-   * A simple test for MIL code fragments that return a known FlagConst, returning either the
-   * constant or null.
+   * A simple test for MIL code fragments that return a known Flag, returning either the constant or
+   * null.
    */
-  FlagConst returnsFlagConst() {
+  Flag returnsFlag() {
     return null;
   }
 
@@ -328,8 +336,7 @@ public abstract class Code {
 
   abstract void eliminateDuplicates();
 
-  abstract void collect();
-
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   abstract void collect(TypeSet set);
 
   /** Simplify uses of constructor functions in this code sequence. */
@@ -355,6 +362,13 @@ public abstract class Code {
 
   /** Count the number of non-tail calls to blocks in this abstract syntax fragment. */
   abstract void countCalls();
+
+  /**
+   * Count the number of calls to blocks, both regular and tail calls, in this abstract syntax
+   * fragment. This is suitable for counting the calls in the main function; unlike countCalls, it
+   * does not skip tail calls at the end of a code sequence.
+   */
+  abstract void countAllCalls();
 
   /**
    * Search this fragment of MIL code for tail calls, adding new blocks that should be included in

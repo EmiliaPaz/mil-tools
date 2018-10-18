@@ -49,8 +49,13 @@ public abstract class Defn {
    */
   protected boolean isEntrypoint = false;
 
+  /** Return the flag to indicate whether this definition is considered to be an entrypoint. */
+  public boolean isEntrypoint() {
+    return isEntrypoint;
+  }
+
   /** Set the flag to indicate whether this definition is considered to be an entrypoint. */
-  public void isEntrypoint(boolean b) {
+  public void setIsEntrypoint(boolean b) {
     isEntrypoint = b;
   }
 
@@ -135,37 +140,25 @@ public abstract class Defn {
   }
 
   /**
-   * Visit this Defn as part of a depth first search, and build up a list of Defn nodes that can be
+   * Visit this Defn as part of a depth first search, and build a list of Defn nodes that can be
    * used to compute strongly-connected components.
    */
   Defns visitDepends(Defns defns) {
     if (visitNum == dfsNum) { // Repeat visit to this Defn?
       occurs++;
-      // !System.out.println(getId() + " has now occurred " + occurs + " times");
     } else { // First time at this Defn
       // Mark this Defn as visited, and initialize fields
       visitNum = dfsNum;
       occurs = 1;
-      // !System.out.println("First occurrence of " + getId());
       scc = null;
       callers = null;
       callees = null;
 
       // Find immediate dependencies
       Defns deps = dependencies();
-      // !System.out.println("------------");
-      // !displayDefn();
-      // !System.out.print("DEPENDS ON: ");
-      // !String msg = "";
-      // !for (Defns ds = deps; ds!=null; ds=ds.next) {
-      // !  System.out.print(msg); msg = ", ";
-      // !  System.out.print(ds.head.getId());
-      // !}
-      // !System.out.println();
 
       // Visit all the immediate dependencies
       for (; deps != null; deps = deps.next) {
-        // !System.out.println("Adjacency: " + getId() + " -> " + deps.head.getId());
         defns = deps.head.visitDepends(defns);
         if (!Defns.isIn(deps.head, callees)) {
           callees = new Defns(deps.head, callees);
@@ -200,31 +193,22 @@ public abstract class Defn {
     return callers;
   }
 
-  /** Display a printable representation of this MIL construct on the specified PrintWriter. */
-  public void dump(PrintWriter out) {
-    // ! out.println("[occurs=" + occurs
-    // !           + ", indegree=" + Defns.length(callers)
-    // !           + ", outdegree=" + Defns.length(callees) + "]");
-    // ! out.print(this.getId() + " -> ");
-    // ! for (Defns ds=callees; ds!=null; ds=ds.next) {
-    // !   out.print(" " + ds.head.getId());
-    // ! }
-    // ! out.println(";");
-    // ! out.print(this.getId() + " -> ");
-    // ! for (Defns ds=callees; ds!=null; ds=ds.next) {
-    // !   out.print(" " + ds.head.getId());
-    // ! }
-    // ! out.println(";");
-    displayDefn(out, isEntrypoint);
-  }
-
-  public void displayDefn() {
+  /** Display a printable representation of this object on the standard output. */
+  public void dump() {
     PrintWriter out = new PrintWriter(System.out);
-    displayDefn(out, isEntrypoint);
+    dump(out);
     out.flush();
   }
 
-  abstract void displayDefn(PrintWriter out, boolean isEntrypoint);
+  /** Display a printable representation of this object on the specified PrintWriter. */
+  public void dump(PrintWriter out) {
+    dump(out, isEntrypoint);
+  }
+
+  public static boolean renameTemps = true;
+
+  /** Display a printable representation of this definition on the specified PrintWriter. */
+  abstract void dump(PrintWriter out, boolean isEntrypoint);
 
   void limitRecursion() throws Failure {
     /* do nothing */
@@ -237,7 +221,7 @@ public abstract class Defn {
   abstract void setInitialType() throws Failure;
 
   /**
-   * Type check the body of this definition, but reporting rather than throwing' an exception error
+   * Type check the body of this definition, but reporting rather than throwing an exception error
    * if the given handler is not null.
    */
   abstract void checkBody(Handler handler) throws Failure;
@@ -253,6 +237,11 @@ public abstract class Defn {
 
   void extendAddrMap(HashAddrMap addrMap, int addr) {
     addrMap.addCodeLabel(addr, toString());
+  }
+
+  /** Generate code to invoke the main definition, if it is a block with no parameters. */
+  void callMain(MachineBuilder builder) {
+    /* Ignore if main is not a Block */
   }
 
   /** First pass code generation: produce code for top-level definitions. */
@@ -288,14 +277,11 @@ public abstract class Defn {
       if (calls[i] != null) {
         Allocator alloc = calls[i].isAllocator();
         if (alloc != null) {
-          // !System.out.print("Allocator: "); alloc.dump();
           Cfun cf = alloc.cfunNoArgs();
           if (cf != null) {
-            // !System.out.println(" cfun = " + cf.getId());
             code = new Assert(params[i], cf, code);
           } else {
             TopLevel tl = alloc.getTopLevel();
-            // !System.out.println(" " +(tl!=null ? (tl.getId()) : "null"));
             // We are only matching on the outermost constructor in each allocator, so we should
             // only use the
             // top-level version if there are no arguments.  This still works nicely for examples
@@ -333,13 +319,13 @@ public abstract class Defn {
     return false;
   }
 
+  boolean detectLoops(Blocks visited) {
+    return false;
+  }
+
   /** Perform pre-inlining cleanup on each Block in this SCC. */
   void cleanup() {
     /* Nothing to do here */
-  }
-
-  boolean detectLoops(Blocks visited) {
-    return false;
   }
 
   /** Apply inlining. */
@@ -383,9 +369,6 @@ public abstract class Defn {
         if (a != null) {
           DefnSCC scc = getScc(); // ... in a call to a non-recursive Defn
           if (scc != null && !scc.isRecursive()) {
-            // !System.out.println("Known argument " + a + " in call to: ");
-            // !this.displayDefn();
-            // !System.out.println();
             if (calls == null) {
               calls = new Call[l];
             }
@@ -398,24 +381,15 @@ public abstract class Defn {
   }
 
   /**
-   * Compute a summary for this definition (if it is a block or top-level) and then look for a
-   * previously encountered item with the same code in the given table. Return true if a duplicate
-   * was found.
+   * Compute a summary for this definition (if it is a block, top-level, or closure) and then look
+   * for a previously encountered item with the same code in the given table. Return true if a
+   * duplicate was found.
    */
-  abstract boolean summarizeDefns(Blocks[] blocks, TopLevels[] topLevels);
+  abstract boolean summarizeDefns(Blocks[] blocks, TopLevels[] topLevels, ClosureDefns[] closures);
 
   abstract void eliminateDuplicates();
 
-  abstract void collect();
-
-  void clearArgVals() {
-    /* nothing to do */
-  }
-
-  void checkCollection() {
-    /* nothing to do */
-  }
-
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   abstract void collect(TypeSet set);
 
   /** Apply constructor function simplifications to this program. */
@@ -443,6 +417,11 @@ public abstract class Defn {
     return null;
   }
 
+  /** Test to determine if this is an appropriate definition to match the given type. */
+  MemArea isMemAreaOfType(Scheme inst) {
+    return null;
+  }
+
   protected static String mkid(String id, int num) {
     return (num == 0) ? id : (id + num);
   }
@@ -459,7 +438,7 @@ public abstract class Defn {
 
   abstract void bitdataRewrite(BitdataMap m);
 
-  void topLevelrepTransform(Handler handler, RepTypeSet set) {
+  void topLevelRepTransform(Handler handler, RepTypeSet set) {
     /* do nothing */
   }
 
@@ -473,6 +452,10 @@ public abstract class Defn {
 
   /** Rewrite the components of this definition to account for changes in representation. */
   abstract void repTransform(Handler handler, RepTypeSet set);
+
+  Tail makeTail() throws Failure {
+    throw new Failure("Unable to use \"" + this + "\" as a main function");
+  }
 
   /** Add this exported definition to the specified MIL environment. */
   abstract void addExport(MILEnv exports);
@@ -517,6 +500,13 @@ public abstract class Defn {
   abstract void countCalls();
 
   /**
+   * Count the number of calls to blocks, both regular and tail calls, in this abstract syntax
+   * fragment. This is suitable for counting the calls in the main function; unlike countCalls, it
+   * does not skip tail calls at the end of a code sequence.
+   */
+  abstract void countAllCalls();
+
+  /**
    * Identify the set of blocks that should be included in the function that is generated for this
    * definition. A block call in the tail for a TopLevel is considered a regular call (it will
    * likely be called from the initialization code), but a block call in the tail for a ClosureDefn
@@ -532,8 +522,22 @@ public abstract class Defn {
   }
 
   /**
+   * Calculate the LLVM return type that will be produced by the code in the main Block of a
+   * program, if one has been specified.
+   */
+  llvm.Type initType(LLVMMap lm) throws Failure {
+    return llvm.Type.vd;
+  }
+
+  /** Generate an LLVM code sequence from the main Block in a program, if one has been specified. */
+  llvm.Code initCode(LLVMMap lm, InitVarMap ivm) throws Failure {
+    throw new Failure(
+        "Cannot use \"" + this + "\" as a main function (requires zero parameter block)");
+  }
+
+  /**
    * Generate code (in reverse) to initialize each TopLevel (unless all of the components are
-   * statically known). TODO: what if a TopLevel has an empty array of Lhs?
+   * statically known).
    */
   llvm.Code addRevInitCode(LLVMMap lm, InitVarMap ivm, llvm.Code code) {
     return code;

@@ -46,13 +46,17 @@ public class Done extends Code {
   }
 
   /** Display a printable representation of this MIL construct on the specified PrintWriter. */
-  public void dump(PrintWriter out) {
+  public void dump(PrintWriter out, Temps ts) {
     indent(out);
-    t.displayln(out);
+    t.displayln(out, ts);
   }
 
-  /** Force the application of a TempSubst to this Code sequence. */
-  public Code forceApply(TempSubst s) { // t
+  /**
+   * Force the application of a TempSubst to this Code sequence, forcing construction of a fresh
+   * copy of the input code structure, including the introduction of new temporaries in place of any
+   * variables introduced by Binds.
+   */
+  public Code forceApply(TempSubst s) {
     return new Done(t.forceApply(s));
   }
 
@@ -110,6 +114,18 @@ public class Done extends Code {
     return t.doesntReturn();
   }
 
+  boolean detectLoops(Block src, Blocks visited) { // look for src[x] = b[x]
+    return t.detectLoops(src, visited);
+  }
+
+  /**
+   * Return true if this code enters a non-productive black hole (i.e., immediately calls halt or
+   * loop).
+   */
+  boolean blackholes() {
+    return t.blackholes();
+  }
+
   /**
    * Test whether a given Code/Tail value is an expression of the form return vs, with the specified
    * Temp[] vs as parameter. We also return a true result for a Tail of the form return _, where the
@@ -121,18 +137,11 @@ public class Done extends Code {
     return t.isReturn(vs);
   }
 
-  boolean detectLoops(Block src, Blocks visited) { // look for src[x] = b[x]
-    return t.detectLoops(src, visited);
-  }
-
   /**
    * Perform inlining on this Code, decrementing the limit each time a successful inlining is
    * performed, and declining to pursue further inlining at this node once the limit reaches zero.
    */
   Code inlining(Block src, int limit) {
-    // !System.out.print("Got down to Done (limit "+limit+"): ");
-    // !t.dump();
-    // !System.out.println();
     BlockCall bc = t.bypassGotoBlockCall();
     if (bc != null) {
       t = bc;
@@ -140,21 +149,23 @@ public class Done extends Code {
     if (limit > 0) { // Is this an opportunity for suffix inlining?
       Code ic = t.suffixInline(src);
       if (ic != null) {
-        // !System.out.println("Immediate result of suffix inlining was:");
-        // !ic.dump();
         return ic.inlining(src, limit - 1);
       }
-      // !System.out.println("could not inline here");
     }
     return this;
   }
 
   Code prefixInline(TempSubst s, Temp[] us, Code d) {
-    return new Bind(us, t.apply(s), d);
+    Tail nt = t.apply(s);
+    return nt.blackholes() ? new Done(nt) : new Bind(us, nt, d);
+  }
+
+  int prefixInlineLength() {
+    return 1;
   }
 
   int prefixInlineLength(int len) {
-    return len + 1;
+    return t.blackholes() ? 0 : (len + 1);
   }
 
   /**
@@ -213,23 +224,16 @@ public class Done extends Code {
   /** Optimize a Code block using a simple flow analysis. */
   public Code flow(Facts facts, TempSubst s) {
     t = t.apply(s);
-    // !System.out.println("At Done, before rewrite");
     Code nc = t.rewrite(facts);
-    // !System.out.println("At Done, with code");
-    // !if (nc==null) {
-    // !  System.out.print("  null, so keeping "); t.dump(); System.out.println();
-    // !} else {
-    // !  nc.dump();
-    // !}
     return (nc == null) ? this : nc.flow(facts, s);
   }
 
   /**
-   * A simple test for MIL code fragments that return a known FlagConst, returning either the
-   * constant or null.
+   * A simple test for MIL code fragments that return a known Flag, returning either the constant or
+   * null.
    */
-  FlagConst returnsFlagConst() {
-    return t.returnsFlagConst();
+  Flag returnsFlag() {
+    return t.returnsFlag();
   }
 
   public Code andThen(Temp[] vs, Code rest) {
@@ -274,10 +278,7 @@ public class Done extends Code {
     t.eliminateDuplicates();
   }
 
-  void collect() {
-    t.collect();
-  }
-
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     t.collect(set);
   }
@@ -310,13 +311,22 @@ public class Done extends Code {
   }
 
   /** Find the argument variables that are used in this Code sequence. */
-  Temps addArgs() throws Failure { // t
+  Temps addArgs() throws Failure {
     return t.addArgs(null);
   }
 
   /** Count the number of non-tail calls to blocks in this abstract syntax fragment. */
   void countCalls() {
     /* no non-tail calls here */
+  }
+
+  /**
+   * Count the number of calls to blocks, both regular and tail calls, in this abstract syntax
+   * fragment. This is suitable for counting the calls in the main function; unlike countCalls, it
+   * does not skip tail calls at the end of a code sequence.
+   */
+  void countAllCalls() {
+    t.countAllCalls();
   }
 
   /**

@@ -1,4 +1,4 @@
-require "lib/basic.mil"
+require "basic.mil"
   
 -- An impure primitive that returns its input as a result, but also
 -- prints that value on the console:
@@ -10,4 +10,7 @@ traceWord       <- {w} [] <- printWord((w)); return w
 export printWord :: Word -> Proc Unit
 printWord <- {w} c <- printWord1{w}; Proc(c)
 printWord1{w} [] = [] <- printWord((w)); Unit()
+
+export printString
+external printString :: Ref String -> Proc Unit
 

@@ -25,12 +25,12 @@ import compiler.Position;
 import core.*;
 import java.io.PrintWriter;
 
-class TopLhs {
+public class TopLhs {
 
   private String id;
 
   /** Default constructor. */
-  TopLhs(String id) {
+  public TopLhs(String id) {
     this.id = id;
   }
 
@@ -59,10 +59,11 @@ class TopLhs {
     return id;
   }
 
-  void displayDefn(PrintWriter out, boolean isEntrypoint) {
+  /** Display a printable representation of this definition on the specified PrintWriter. */
+  void dump(PrintWriter out, boolean isEntrypoint) {
     if (declared != null) {
       if (isEntrypoint) {
-        out.print("export ");
+        out.print("entrypoint ");
       }
       out.println(id + " :: " + declared);
     }
@@ -82,26 +83,16 @@ class TopLhs {
     return declared != null;
   }
 
-  /** Lists the generic type variables for this definition. */
-  protected TVar[] generics = TVar.noTVars;
-
-  /** Produce a printable description of the generic variables for this definition. */
-  public String showGenerics() {
-    return TVar.show(generics);
-  }
-
-  void generalizeType(Handler handler) throws Failure {
-    // !   debug.Log.println("Generalizing definition for: " + getId());
+  void generalizeLhsType(Position pos, Handler handler, TVars gens, TVar[] generics)
+      throws Failure {
     if (defining != null) {
-      TVars gens = defining.tvars();
-      generics = TVar.generics(gens, null);
-      // !     debug.Log.println("generics: " + showGenerics());
+      debug.Log.println(
+          "Generalizing definition for: " + getId() + " with generics " + TVar.show(generics));
       Scheme inferred = defining.generalize(generics);
       debug.Log.println("Inferred " + id + " :: " + inferred);
-      if (declared == null) {
-        declared = inferred;
-      } else if (!declared.alphaEquiv(inferred)) {
+      if (declared != null && !declared.alphaEquiv(inferred)) {
         throw new Failure(
+            pos,
             "Declared type \""
                 + declared
                 + "\" for \""
@@ -109,6 +100,8 @@ class TopLhs {
                 + "\" is more general than inferred type \""
                 + inferred
                 + "\"");
+      } else {
+        declared = inferred;
       }
       findAmbigTVars(handler, gens); // search for ambiguous type variables ...
     }
@@ -116,6 +109,7 @@ class TopLhs {
 
   void findAmbigTVars(Handler handler, TVars gens) {}
 
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     if (declared != null) {
       declared = declared.canonScheme(set);
@@ -147,7 +141,7 @@ class TopLhs {
   }
 
   /** Return a substitution that can instantiate this Lhs to the given type. */
-  TVarSubst specializingSubst(Type inst) {
+  TVarSubst specializingSubst(TVar[] generics, Type inst) {
     return declared.specializingSubst(generics, inst);
   }
 
@@ -189,9 +183,9 @@ class TopLhs {
   Defn makeEntryBlock(Position pos, TopLevel tl) {
     Block b = declared.liftToBlock0(pos, id, tl);
     if (b != null) {
-      b.isEntrypoint(true); // Mark the new block as an entrypoint ...
+      b.setIsEntrypoint(tl.isEntrypoint()); // Use the same entrypoint flag as the original ...
       id = id + "_impl"; // ... rename the original entrypoint ...
-      tl.isEntrypoint(false); // ... and clear the flag for the original entrypoint.
+      tl.setIsEntrypoint(false); // ... and clear the flag for the original entrypoint.
       return b;
     }
     return tl;
@@ -202,7 +196,7 @@ class TopLhs {
     declared = declared.canonScheme(set);
   }
 
-  void setDeclared(Handler handler, Position pos, Scheme scheme) {
+  public void setDeclared(Handler handler, Position pos, Scheme scheme) {
     if (declared != null) {
       handler.report(new Failure(pos, "Multiple type annotations for \"" + id + "\""));
     }
@@ -214,13 +208,40 @@ class TopLhs {
   }
 
   /**
-   * Create a global variable definition for a component of a TopLevel definition that has no static
-   * value and will be calculated instead at runtime.
+   * Determine whether this item is for a non-Unit, corresponding to a value that requires a
+   * run-time representation in the generated LLVM.
    */
-  llvm.GlobalVarDefn globalVarDefn(LLVMMap lm) {
-    return new llvm.GlobalVarDefn(id, lm.toLLVM(defining).defaultValue());
+  boolean nonUnit() {
+    return defining.nonUnit();
   }
 
+  static boolean hasNonUnits(TopLhs[] lhs) {
+    for (int i = 0; i < lhs.length; i++) {
+      if (lhs[i].nonUnit()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Create a global variable definition for a component of a TopLevel definition that is
+   * initialized to the specified value.
+   */
+  llvm.GlobalVarDefn globalVarDefn(LLVMMap lm, int mods, llvm.Value val) {
+    return new llvm.GlobalVarDefn(mods, id, val, 0);
+  }
+
+  /**
+   * A variation of globalVarDefn that is used for variables whose value will be calculated at
+   * runtime; in this case, we set the initial value to a simple default that is appropriate to the
+   * type of the variable.
+   */
+  llvm.GlobalVarDefn globalVarDefn(LLVMMap lm, int mods) {
+    return globalVarDefn(lm, mods, lm.toLLVM(defining).defaultValue());
+  }
+
+  /** Make a new temporary to hold a value for this left hand side. */
   Temp makeTemp() {
     return new Temp(defining);
   }

@@ -61,9 +61,9 @@ class ELet extends PosExpr {
   }
 
   /**
-   * Perform a scope analysis on this expression, creating a Temp object for each variable binding,
-   * checking that all of the identifiers that it references correspond to bound variables, and
-   * returning the set of free variables in the term.
+   * Perform scope analysis on this expression, creating a Temp for each variable binding, checking
+   * that all of the identifiers it references correspond to bound variables, and returning the set
+   * of free variables in the term.
    */
   DefVars inScopeOf(Handler handler, MILEnv milenv, Env env) { //  let bindings in e
     // Extract the bindings from the definitions in this program:
@@ -87,7 +87,6 @@ class ELet extends PosExpr {
     // Compute the strongly connected components:
     sccs = Bindings.scc(bindings);
     BindingSCC.checkSafeRecursion(handler, sccs);
-    // !   BindingSCCs.display("local bindings", sccs); // TODO: debug code; remove.
 
     return fvs;
   }

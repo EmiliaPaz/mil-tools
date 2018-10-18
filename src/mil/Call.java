@@ -56,30 +56,35 @@ public abstract class Call extends Tail {
     return withArgs(new Atom[] {a, b});
   }
 
-  public Call withArgs(Atom a, int n) {
-    return withArgs(new Atom[] {a, new IntConst(n)});
+  public Call withArgs(Atom a, long n) {
+    return withArgs(new Atom[] {a, new Word(n)});
   }
 
-  public Call withArgs(int n, Atom b) {
-    return withArgs(new Atom[] {new IntConst(n), b});
+  public Call withArgs(long n, Atom b) {
+    return withArgs(new Atom[] {new Word(n), b});
   }
 
-  /** Test to see if this Tail expression includes a free occurrence of a particular variable. */
+  /** Test if this Tail expression includes a free occurrence of a particular variable. */
   public boolean contains(Temp w) {
     return args != null && w.occursIn(args);
   }
 
   /**
-   * Test to see if this Tail expression includes an occurrence of any of the variables listed in
-   * the given array.
+   * Test if this Tail expression includes an occurrence of any of the variables listed in the given
+   * array.
    */
   public boolean contains(Temp[] ws) {
     return Atom.occursIn(args, ws);
   }
 
+  /** Add the variables mentioned in this tail to the given list of variables. */
+  public Temps add(Temps vs) {
+    return Temps.add(args, vs);
+  }
+
   /**
-   * Test to see if the arguments for two Calls are the same. Either both argument lists are null,
-   * or else both have the same list of Atoms.
+   * Test if the arguments for two Calls are the same. Either both argument lists are null, or else
+   * both have the same list of Atoms.
    */
   public boolean sameArgs(Call that) {
     return (this.args == null)
@@ -98,21 +103,20 @@ public abstract class Call extends Tail {
    * block, primitive, and data constructor calls; braces for closure constructors; and brackets for
    * monadic thunk constructors).
    */
-  public static void dump(PrintWriter out, String name, String open, Atom[] args, String close) {
+  public static void dump(
+      PrintWriter out, String name, String open, Atom[] args, String close, Temps ts) {
     out.print(name);
     if (args != null) {
       out.print(open);
-      Atom.dump(out, args);
+      Atom.dump(out, args, ts);
       out.print(close);
     }
   }
 
-  /** Add the variables mentioned in this tail to the given list of variables. */
-  public Temps add(Temps vs) {
-    return Temps.add(args, vs);
-  }
-
-  /** Apply a TempSubst to this Tail. */
+  /**
+   * Apply a TempSubst to this Tail. A call to this method, even if the substitution is empty, will
+   * force the construction of a new Tail.
+   */
   public Tail forceApply(TempSubst s) {
     return callDup(TempSubst.apply(args, s));
   }
@@ -289,27 +293,6 @@ public abstract class Call extends Tail {
             (calls[i].isAllocator() == null) ? Temp.noTemps : Temp.makeTemps(calls[i].getArity());
       }
     }
-    // !/*
-    // !if (tss==null) {
-    // !  System.out.println("-null tss-");
-    // !} else {
-    // !  System.out.print("[");
-    // !  for (int i=0; i<tss.length; i++) {
-    // !    if (i>0) { System.out.print(", "); }
-    // !    if (tss[i]==null) {
-    // !      System.out.print("-");
-    // !    } else {
-    // !      System.out.print("[");
-    // !      for (int j=0; j<tss[i].length; j++) {
-    // !        if (j>0) { System.out.print(", "); }
-    // !        System.out.print(tss[i][j].toString());
-    // !      }
-    // !      System.out.print("]");
-    // !    }
-    // !  }
-    // !  System.out.println("]");
-    // !}
-    // !*/
     return tss;
   }
 
@@ -462,7 +445,7 @@ public abstract class Call extends Tail {
       if (calls[i] == null) {
         out.print("-");
       } else {
-        calls[i].dump(out);
+        calls[i].dump(out, (Temps) null);
       }
     }
     out.print("}");

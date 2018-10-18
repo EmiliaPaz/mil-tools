@@ -43,7 +43,7 @@ public class Return extends Call {
     return true;
   }
 
-  /** Test to see if two Tail expressions are the same. */
+  /** Test if two Tail expressions are the same. */
   public boolean sameTail(Tail that) {
     return that.sameReturn(this);
   }
@@ -53,9 +53,9 @@ public class Return extends Call {
   }
 
   /** Display a printable representation of this MIL construct on the specified PrintWriter. */
-  public void dump(PrintWriter out) {
+  public void dump(PrintWriter out, Temps ts) {
     out.print("return ");
-    Atom.displayTuple(out, args);
+    Atom.displayTuple(out, args, ts);
   }
 
   /** Construct a new Call value that is based on the receiver, without copying the arguments. */
@@ -139,11 +139,11 @@ public class Return extends Call {
   }
 
   /**
-   * A simple test for MIL code fragments that return a known FlagConst, returning either the
-   * constant or null.
+   * A simple test for MIL code fragments that return a known Flag, returning either the constant or
+   * null.
    */
-  FlagConst returnsFlagConst() {
-    return args.length == 1 ? args[0].returnsFlagConst() : null;
+  Flag returnsFlag() {
+    return args.length == 1 ? args[0].returnsFlag() : null;
   }
 
   Atom[] returnsAtom() {
@@ -176,6 +176,7 @@ public class Return extends Call {
     return this.alphaArgs(thisvars, that, thatvars);
   }
 
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) { // Sufficient for Return
     if (outputs != null) {
       outputs = outputs.canonType(set);
@@ -209,32 +210,61 @@ public class Return extends Call {
     return vals;
   }
 
-  /** Generate LLVM code to execute this Tail in tail call position. */
+  /**
+   * Generate LLVM code for a Bind of the form (vs <- this; c). The isTail parameter should only be
+   * true if c is return vs.
+   */
+  llvm.Code toLLVMBind(
+      LLVMMap lm, VarMap vm, TempSubst s, Temp[] vs, boolean isTail, Code c, Label[] succs) {
+    return c.toLLVMCode(lm, vm, TempSubst.extend(vs, args, s), succs);
+  }
+
+  /** Generate LLVM code to execute this Tail in tail call position (i.e., as part of a Done). */
   llvm.Code toLLVMDone(LLVMMap lm, VarMap vm, TempSubst s, Label[] succs) {
-    if (args.length == 0) {
+    Atom[] nuargs = Atom.nonUnits(args);
+    if (nuargs.length == 0) {
       return new llvm.RetVoid();
-    } else if (args.length == 1) {
-      return new llvm.Ret(args[0].toLLVMAtom(lm, vm, s));
+    } else if (nuargs.length == 1) {
+      return new llvm.Ret(nuargs[0].toLLVMAtom(lm, vm, s));
     } else {
-      llvm.Value[] vals = new llvm.Value[args.length];
-      for (int i = 0; i < args.length; i++) {
-        vals[i] = args[i].toLLVMAtom(lm, vm, s);
+      llvm.Value[] vals = new llvm.Value[nuargs.length];
+      for (int i = 0; i < nuargs.length; i++) {
+        vals[i] = nuargs[i].toLLVMAtom(lm, vm, s);
       }
       return new llvm.Ret(new llvm.Struct(lm.toLLVM(outputs), vals));
     }
   }
 
-  /** Generate LLVM code to execute this Tail with NO result from the right hand side of a Bind. */
-  llvm.Code toLLVMContVoid(LLVMMap lm, VarMap vm, TempSubst s, llvm.Code c) {
+  /**
+   * Generate LLVM code to execute this Tail with NO result from the right hand side of a Bind. Set
+   * isTail to true if the code sequence c is an immediate ret void instruction.
+   */
+  llvm.Code toLLVMBindVoid(LLVMMap lm, VarMap vm, TempSubst s, boolean isTail, llvm.Code c) {
     debug.Internal.error("A void Return should have been eliminated");
     return c; // Although this return value is actually correct for [] <- return []; c ...
   }
 
   /**
    * Generate LLVM code to execute this Tail and return a result from the right hand side of a Bind.
+   * Set isTail to true if the code sequence c will immediately return the value in the specified
+   * lhs.
    */
-  llvm.Code toLLVMContBind(LLVMMap lm, VarMap vm, TempSubst s, llvm.Local lhs, llvm.Code c) {
+  llvm.Code toLLVMBindCont(
+      LLVMMap lm, VarMap vm, TempSubst s, boolean isTail, llvm.Local lhs, llvm.Code c) {
     debug.Internal.error("Return should have been eliminated");
     return c;
+  }
+
+  /**
+   * Worker function for generateRevInitCode, called when we have established that this tail
+   * expression, for the given TopLevel, should be executed during program initialization.
+   */
+  llvm.Code revInitTail(LLVMMap lm, InitVarMap ivm, TopLevel tl, TopLhs[] lhs, llvm.Code code) {
+    // This is a special case for TopLevels that have a return expression for their tail
+    // (essentially copying another
+    // value that is defined at the top-level); we cannot use toLLVMBindVoid(), toLLVMBindCont(), or
+    // toLLVMBindTail()
+    // in this case.
+    return tl.initLLVMTopLhs(lm, ivm, args, code);
   }
 }

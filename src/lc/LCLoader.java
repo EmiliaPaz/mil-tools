@@ -22,7 +22,7 @@ import compiler.*;
 import core.*;
 import mil.*;
 
-public class LCLoader {
+public class LCLoader extends core.Loader {
 
   /** Records the list of objects that have already been loaded. */
   private LCPrograms loaded = null;
@@ -82,25 +82,31 @@ public class LCLoader {
   }
 
   /**
-   * If the given name ends with ".mil", then add it as a MIL requirement for this loader and return
-   * true. Otherwise return false, indicating that further action is required to load it as lc code.
+   * If the given name ends with ".mil" or ".lmil", then add it as a MIL requirement for this loader
+   * and return true. Otherwise return false, indicating that further action is required to load it
+   * as lc code.
    */
   public boolean loadMIL(String name) {
-    if (name.endsWith(".mil")) {
+    if (name.endsWith(".mil") || name.endsWith(".lmil")) {
       requireMIL(name);
       return true;
     }
     return false;
   }
 
+  /** Set the search path for this LCLoader as well as the underlying MILLoader. */
+  public void setSearchPath(String[] searchPath) {
+    super.setSearchPath(searchPath);
+    milLoader.setSearchPath(searchPath);
+  }
+
   /**
    * Load all of the files that have been requested from this loader, including any transitive
    * dependencies.
    */
-  public MILProgram load(Handler handler) throws Failure {
+  public MILProgram load(Handler handler, String mainName) throws Failure {
     // Load all of the required LCProgram objects:
     LCProgramSCCs sccs = LCPrograms.scc(syntaxAnalysis(handler));
-    // !   LCProgramSCCs.display("LCPrograms", sccs);
 
     // Load all of the required MIL files:
     MILProgram mil = new MILProgram(); // Construct an empty MIL program
@@ -127,8 +133,16 @@ public class LCLoader {
         ast.compile(mil, milenv);
       }
     }
-    if (mil.isEmpty()) {
-      handler.report(new Failure("No entrypoints have been specified for this program"));
+    if (!mainName.equals("")) {
+      Top main = milenv.findTop(mainName);
+      if (main == null) {
+        handler.report(new Failure("Program does not contain a definition for " + mainName));
+      } else {
+        mil.setMain(main.getDefn());
+      }
+    } else if (mil.isEmpty()) {
+      handler.report(
+          new Failure("No entrypoints or main function have been specified for this program"));
     }
     mil.addArgs(); // Add arguments to blocks and closures
     handler.abortOnFailures();

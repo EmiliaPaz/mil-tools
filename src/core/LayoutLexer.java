@@ -56,13 +56,13 @@ public class LayoutLexer extends CoreLexer implements CoreTokens {
    * absence of a delayedToken, or to avoid returning the code for a real token when an implicit END
    * is required.
    */
-  private static final int NOTOKEN = 46;
+  private static final int NOTOKEN = 47;
 
   /**
    * SOFTEND is a dummy token code that is used to indicate that an implicit '}' has been inserted
    * at the end of a layout section.
    */
-  private static final int SOFTEND = 47;
+  private static final int SOFTEND = 48;
 
   public String describeToken(int token, String lexeme) {
     switch (token) {
@@ -127,7 +127,6 @@ public class LayoutLexer extends CoreLexer implements CoreTokens {
       super.nextToken();
       push(HARD);
     } else {
-      // !System.out.println("entered a new section");
       push(getPos().getColumn());
     }
   }
@@ -190,7 +189,6 @@ public class LayoutLexer extends CoreLexer implements CoreTokens {
       token = delayedToken;
       delayedToken = NOTOKEN;
       if (lastToken == SEMI) {
-        // !System.out.println("LL1 token " + token + ", " + describeToken(token, lexemeText));
         return token;
       }
     } else {
@@ -204,7 +202,6 @@ public class LayoutLexer extends CoreLexer implements CoreTokens {
             // specific tokens.
           default:
             delayedToken = token;
-            // !System.out.println("Delaying " + describeToken());
             token = SEMI;
             // Add tokens that do suppress an inserted SEMI here
             // using the DelayTokens macro.
@@ -219,7 +216,6 @@ public class LayoutLexer extends CoreLexer implements CoreTokens {
         token = SOFTEND;
       }
     }
-    // !System.out.println("LL2 token " + token + ", " + describeToken(token, lexemeText));
     return token;
   }
 

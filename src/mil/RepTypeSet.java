@@ -19,6 +19,8 @@
 package mil;
 
 import compiler.*;
+import compiler.BuiltinPosition;
+import compiler.Failure;
 import core.*;
 import java.util.HashMap;
 
@@ -31,11 +33,9 @@ public class RepTypeSet extends TypeSet {
    */
   protected Type canon(Tycon h, int args) {
     int len = h.repTransform(this, args); // Rewrite a tuple type?
-    return (len < 0) ? super.canon(h, args) : super.canonOther(TupleCon.tuple(len).asType(), len);
-  }
-
-  protected Type buildCanon(Tycon h, int args) {
-    return rebuild(h.canonTycon(this).asType(), args);
+    return (len < 0)
+        ? super.canon(h.canonTycon(this), args)
+        : super.canonOther(TupleCon.tuple(len).asType(), len);
   }
 
   /**
@@ -117,5 +117,27 @@ public class RepTypeSet extends TypeSet {
       }
       return as;
     }
+  }
+
+  private Tails initializers = null;
+
+  void addInitializer(Tail tail) {
+    initializers = new Tails(tail, initializers);
+  }
+
+  Defn makeMain(Defn oldMain) throws Failure {
+    String id;
+    if (oldMain == null) {
+      if (initializers == null) {
+        return null;
+      }
+    } else {
+      addInitializer(oldMain.makeTail());
+    }
+    Code code = new Done(initializers.head);
+    while ((initializers = initializers.next) != null) {
+      code = new Bind(new Temp(), initializers.head, code);
+    }
+    return new Block(BuiltinPosition.pos, "initialize", Temp.noTemps, code);
   }
 }

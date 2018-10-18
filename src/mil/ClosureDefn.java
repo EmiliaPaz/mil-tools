@@ -91,18 +91,21 @@ public class ClosureDefn extends Defn {
     return "style=filled, fillcolor=salmon";
   }
 
-  void displayDefn(PrintWriter out, boolean isEntrypoint) {
+  /** Display a printable representation of this definition on the specified PrintWriter. */
+  /** Display a printable representation of this definition on the specified PrintWriter. */
+  void dump(PrintWriter out, boolean isEntrypoint) {
     if (declared != null) {
       if (isEntrypoint) {
-        out.print("export ");
+        out.print("entrypoint ");
       }
       out.println(id + " :: " + declared);
     }
 
-    Call.dump(out, id, "{", params, "} ");
-    Atom.displayTuple(out, args);
+    Temps ts = renameTemps ? Temps.push(args, Temps.push(params, null)) : null;
+    Call.dump(out, id, "{", params, "} ", ts);
+    Atom.displayTuple(out, args, ts);
     out.print(" = ");
-    tail.displayln(out);
+    tail.displayln(out, ts);
   }
 
   AllocType instantiate() {
@@ -146,7 +149,7 @@ public class ClosureDefn extends Defn {
   private Type rng;
 
   /**
-   * Type check the body of this definition, but reporting rather than throwing' an exception error
+   * Type check the body of this definition, but reporting rather than throwing an exception error
    * if the given handler is not null.
    */
   void checkBody(Handler handler) throws Failure {
@@ -177,23 +180,15 @@ public class ClosureDefn extends Defn {
   /** Lists the generic type variables for this definition. */
   protected TVar[] generics = TVar.noTVars;
 
-  /** Produce a printable description of the generic variables for this definition. */
-  public String showGenerics() {
-    return TVar.show(generics);
-  }
-
   void generalizeType(Handler handler) throws Failure {
-    // !   debug.Log.println("Generalizing definition for: " + getId());
     if (defining != null) {
       TVars gens = defining.tvars();
       generics = TVar.generics(gens, null);
-      // !     debug.Log.println("generics: " + showGenerics());
       AllocType inferred = defining.generalize(generics);
       debug.Log.println("Inferred " + id + " :: " + inferred);
-      if (declared == null) {
-        declared = inferred;
-      } else if (!declared.alphaEquiv(inferred)) {
+      if (declared != null && !declared.alphaEquiv(inferred)) {
         throw new Failure(
+            pos,
             "Declared type \""
                 + declared
                 + "\" for \""
@@ -201,6 +196,8 @@ public class ClosureDefn extends Defn {
                 + "\" is more general than inferred type \""
                 + inferred
                 + "\"");
+      } else {
+        declared = inferred;
       }
       findAmbigTVars(handler, gens); // search for ambiguous type variables ...
     }
@@ -243,23 +240,15 @@ public class ClosureDefn extends Defn {
   private ClosureDefns derived = null;
 
   public ClosureDefn deriveWithKnownCons(Call[] calls) {
-    // !System.out.println("Looking for derived ClosureDefn with Known Cons ");
-    // !Call.dump(calls);
-    // !System.out.println(" for the Block");
-    // !this.displayDefn();
-    // !System.out.println();
     // Look to see if we have already derived a suitable version of this ClosureDefn:
     for (ClosureDefns cs = derived; cs != null; cs = cs.next) {
       if (cs.head.hasKnownCons(calls)) {
-        // !System.out.println("Found an existing, suitably specialized occurrence of this
-        // ClosureDefn");
         // Return pointer to previous occurrence, or decline the request to specialize
         // if the original closure definition already has the requested allocator pattern.
         return (this == cs.head) ? null : cs.head;
       }
     }
 
-    // !System.out.println("Generating a new closure definition");
     // Given this closure definition, this{params} [args] = t, we want to be able to replace a
     // closure allocation
     // for this and a set of known constructors specified by calls[] with corresponding allocations
@@ -295,7 +284,7 @@ public class ClosureDefn extends Defn {
     Code bcode = addInitializers(calls, params, tss, new Done(newtail));
 
     // Make the definition for the new block b:
-    Block b = new Block(BuiltinPosition.position, bparams, bcode); // TODO: diff position?
+    Block b = new Block(BuiltinPosition.pos, bparams, bcode); // TODO: diff position?
 
     // Fill in the tail for k:
     k.tail = new BlockCall(b, bparams);
@@ -309,14 +298,7 @@ public class ClosureDefn extends Defn {
 
   /** Apply inlining. */
   public void inlining() {
-    // !  System.out.println("==================================");
-    // !  System.out.println("Going to try inlining on:");
-    // !  displayDefn();
-    // !  System.out.println();
     tail = tail.inlineTail();
-    // !  System.out.println("And the result is:");
-    // !  displayDefn();
-    // !  System.out.println();
   }
 
   void liftAllocators() {
@@ -356,7 +338,9 @@ public class ClosureDefn extends Defn {
    * arguments are used.
    */
   int countUnusedArgs(Temp[] dst) {
-    if (isEntrypoint) { // treat all arguments of entrypoints as used
+    if (isEntrypoint) { // treat all entrypoint arguments as used
+      // We don't have to set numUsedArgs and usedArgs because all uses are guarded by isEntrypoint
+      // tests
       return 0;
     } else {
       int unused = dst.length - numUsedArgs; // count # of unused args
@@ -410,7 +394,11 @@ public class ClosureDefn extends Defn {
    * known to be used.
    */
   Temps usedVars(Atom[] args, Temps vs) {
-    if (usedArgs != null) { // ignore this call if no args are used
+    if (isEntrypoint) { // treat all entrypoint arguments as used
+      for (int i = 0; i < args.length; i++) {
+        vs = args[i].add(vs);
+      }
+    } else if (usedArgs != null) { // ignore this call if no args are used
       for (int i = 0; i < args.length; i++) {
         if (usedArgs[i]) { // ignore this argument if the flag is not set
           vs = args[i].add(vs);
@@ -425,9 +413,7 @@ public class ClosureDefn extends Defn {
    * destinations (specifically, the formal parameters of a Block or a ClosureDefn).
    */
   Temp[] removeUnusedTemps(Temp[] dsts) {
-    // ! System.out.println("In " + getId() + ": numUsedArgs=" + numUsedArgs + ", dsts.length=" +
-    // dsts.length);
-    if (numUsedArgs < dsts.length) { // Found some new, unused args
+    if (!isEntrypoint && numUsedArgs < dsts.length) { // Found some new, unused args
       Temp[] newTemps = new Temp[numUsedArgs];
       int j = 0;
       for (int i = 0; i < dsts.length; i++) {
@@ -446,7 +432,8 @@ public class ClosureDefn extends Defn {
    * Update an argument list by removing unused arguments, or return null if no change is required.
    */
   Atom[] removeUnusedArgs(Atom[] args) {
-    if (numUsedArgs < args.length) { // Only rewrite if we have found some new unused arguments
+    if (!isEntrypoint
+        && numUsedArgs < args.length) { // Only rewrite if we have found some new unused arguments
       Atom[] newArgs = new Atom[numUsedArgs];
       int j = 0;
       for (int i = 0; i < args.length; i++) {
@@ -461,7 +448,7 @@ public class ClosureDefn extends Defn {
 
   /** Rewrite this program to remove unused arguments in block calls. */
   void removeUnusedArgs() {
-    if (numUsedArgs < params.length) {
+    if (!isEntrypoint && numUsedArgs < params.length) {
       MILProgram.report(
           "Rewrote closure definition "
               + getId()
@@ -499,23 +486,86 @@ public class ClosureDefn extends Defn {
     return id.hashCode();
   }
 
+  /** Test to see if two ClosureDefn values are alpha equivalent. */
+  boolean alphaClosureDefn(ClosureDefn that) {
+    // Check for same number of parameters:
+    if (this.params.length != that.params.length || this.args.length != that.args.length) {
+      return false;
+    }
+
+    // Build lists of parameters:
+    Temps thisvars = null;
+    Temps thatvars = null;
+    for (int i = 0; i < this.params.length; i++) {
+      thisvars = this.params[i].add(thisvars);
+      thatvars = that.params[i].add(thatvars);
+    }
+    for (int i = 0; i < this.args.length; i++) {
+      thisvars = this.args[i].add(thisvars);
+      thatvars = that.args[i].add(thatvars);
+    }
+
+    // Check bodies for alpha equivalence:
+    return this.tail.alphaTail(thisvars, that.tail, thatvars);
+  }
+
+  /** Holds the most recently computed summary value for this definition. */
+  private int summary;
+
   /**
-   * Compute a summary for this definition (if it is a block or top-level) and then look for a
-   * previously encountered item with the same code in the given table. Return true if a duplicate
-   * was found.
+   * Points to a different definition with equivalent code, if one has been identified. A null value
+   * indicates that there is no replacement.
    */
-  boolean summarizeDefns(Blocks[] blocks, TopLevels[] topLevels) {
+  private ClosureDefn replaceWith = null;
+
+  ClosureDefn getReplaceWith() {
+    return replaceWith;
+  }
+
+  /**
+   * Look for a previously summarized version of this definition, returning true iff a duplicate was
+   * found.
+   */
+  boolean findIn(ClosureDefns[] table) {
+    summary = tail.summary();
+    int idx = this.summary % table.length;
+    if (idx < 0) {
+      idx += table.length;
+    }
+
+    for (ClosureDefns ds = table[idx]; ds != null; ds = ds.next) {
+      if (ds.head.summary == this.summary && ds.head.alphaClosureDefn(this)) {
+        if (isEntrypoint) { // Cannot replace an entrypoint, even though a replacement is available
+          return false;
+        } else if (ds.head.declared == null
+            || (this.declared != null && ds.head.declared.alphaEquiv(this.declared))) {
+          MILProgram.report("Replacing " + this.getId() + " with " + ds.head.getId());
+          this.replaceWith = ds.head;
+          return true;
+        }
+      }
+    }
+
+    // First sighting of this definition, add to the table:
+    this.replaceWith = null; // There is no replacement for this definition (yet)
+    table[idx] = new ClosureDefns(this, table[idx]);
     return false;
+  }
+
+  /**
+   * Compute a summary for this definition (if it is a block, top-level, or closure) and then look
+   * for a previously encountered item with the same code in the given table. Return true if a
+   * duplicate was found.
+   */
+  boolean summarizeDefns(Blocks[] blocks, TopLevels[] topLevels, ClosureDefns[] closures) {
+    return findIn(closures);
   }
 
   void eliminateDuplicates() {
     tail.eliminateDuplicates();
   }
 
-  void collect() {
-    tail.collect();
-  }
-
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     if (declared != null) {
       declared = declared.canonAllocType(set);
@@ -561,7 +611,7 @@ public class ClosureDefn extends Defn {
             + " :: "
             + this.declared
             + ", generics="
-            + korig.showGenerics()
+            + TVar.show(korig.generics)
             + ", substitution="
             + s);
     this.params = Temp.specialize(s, korig.params);
@@ -576,12 +626,13 @@ public class ClosureDefn extends Defn {
    * version to share the same name as the original).
    */
   Defn specializeEntry(MILSpec spec) throws Failure {
-    if (declared.isQuantified()) {
-      throw new PolymorphicEntrypointFailure("closure definition", this);
+    AllocType at = declared.isMonomorphic();
+    if (at != null) {
+      ClosureDefn k = spec.specializedClosureDefn(this, at);
+      k.id = this.id; // use the same name as in the original program
+      return k;
     }
-    ClosureDefn k = spec.specializedClosureDefn(this, declared);
-    k.id = this.id; // use the same name as in the original program
-    return k;
+    throw new PolymorphicEntrypointFailure("closure definition", this);
   }
 
   /** Update all declared types with canonical versions. */
@@ -628,7 +679,6 @@ public class ClosureDefn extends Defn {
    * each subsequent call.
    */
   Temp[] addArgs() throws Failure {
-    // !     System.out.println("In ClosureDefn " + getId());
     if (params == null) { // compute stored params on first visit
       Temps as = tail.addArgs(null);
       for (int i = 0; i < args.length; i++) {
@@ -669,6 +719,15 @@ public class ClosureDefn extends Defn {
   }
 
   /**
+   * Count the number of calls to blocks, both regular and tail calls, in this abstract syntax
+   * fragment. This is suitable for counting the calls in the main function; unlike countCalls, it
+   * does not skip tail calls at the end of a code sequence.
+   */
+  void countAllCalls() {
+    tail.countAllCalls();
+  }
+
+  /**
    * Identify the set of blocks that should be included in the function that is generated for this
    * definition. A block call in the tail for a TopLevel is considered a regular call (it will
    * likely be called from the initialization code), but a block call in the tail for a ClosureDefn
@@ -695,38 +754,51 @@ public class ClosureDefn extends Defn {
     return tail.findSuccs(cfg, src);
   }
 
-  /** Generate an array containing the formal parameters for this closure definition. */
-  llvm.Local[] formalsClosureDefn(LLVMMap lm, VarMap dvm) {
-    llvm.Local[] fs = new llvm.Local[1 + args.length]; // Closure pointer + arguments
-    fs[0] = dvm.reg(closurePtrType(lm));
-    for (int i = 0; i < args.length; i++) {
-      fs[1 + i] = dvm.lookup(lm, args[i]);
+  /** Calculate an array of formal parameters for the associated LLVM function definition. */
+  llvm.Local[] formals(LLVMMap lm, DefnVarMap dvm) {
+    Temp[] nuargs = Temp.nonUnits(args);
+    llvm.Local[] formals = new llvm.Local[1 + nuargs.length]; // Closure pointer + arguments
+    formals[0] = dvm.reg(closurePtrType(lm));
+    for (int i = 0; i < nuargs.length; i++) {
+      formals[1 + i] = dvm.lookup(lm, nuargs[i]);
     }
-    return fs;
+    return formals;
   }
 
-  /** Generate code for the tail portion of this closure definition. */
-  llvm.Code toLLVMClosureDefn(LLVMMap lm, DefnVarMap dvm, llvm.Local clo, Label[] succs) {
-    llvm.Code code =
+  /**
+   * Construct a function definition with the given formal parameters and code, filling in an
+   * appropriate code sequence for the entry block in cs[0], and setting the appropriate type and
+   * internal flag values.
+   */
+  llvm.FuncDefn toLLVMFuncDefn(
+      LLVMMap lm,
+      DefnVarMap dvm,
+      TempSubst s,
+      llvm.Local[] formals,
+      String[] ss,
+      llvm.Code[] cs,
+      Label[] succs) {
+    cs[0] =
         new llvm.CodeComment(
             "body of closure starts here", dvm.loadGlobals(tail.toLLVMDone(lm, dvm, null, succs)));
-
-    if (params.length == 0) { // load closure parameters from memory
-      return code;
-    } else {
+    Temp[] nuparams = Temp.nonUnits(params); // identify non unit parameters
+    if (nuparams.length != 0) { // load closure parameters from memory
       llvm.Type ptrt = lm.closureLayoutType(this).ptr(); // type identifies components of closure
       llvm.Local ptr = dvm.reg(ptrt); // holds a pointer to the closure object
-      for (int n = params.length; --n >= 0; ) { // extract stored parameters
-        llvm.Local pptr =
-            dvm.reg(params[n].lookupType(lm).ptr()); // holds pointer to stored parameter
-        code =
+      for (int n = nuparams.length; --n >= 0; ) { // extract stored parameters
+        llvm.Type pt = nuparams[n].lookupType(lm).ptr();
+        llvm.Local pptr = dvm.reg(pt); // holds pointer to stored parameter
+        cs[0] =
             new llvm.Op(
                 pptr,
-                new llvm.Getelementptr(ptr, new llvm.Int(0), new llvm.Int(n + 1)),
-                new llvm.Op(dvm.lookup(lm, params[n]), new llvm.Load(pptr), code));
+                new llvm.Getelementptr(pt, ptr, new llvm.Word(0), new llvm.Word(n + 1)),
+                new llvm.Op(dvm.lookup(lm, nuparams[n]), new llvm.Load(pptr), cs[0]));
       }
-      return new llvm.CodeComment(
-          "load stored values from closure", new llvm.Op(ptr, new llvm.Bitcast(clo, ptrt), code));
+      cs[0] =
+          new llvm.CodeComment(
+              "load stored values from closure",
+              new llvm.Op(ptr, new llvm.Bitcast(formals[0], ptrt), cs[0]));
     }
+    return new llvm.FuncDefn(llvm.Mods.entry(isEntrypoint), retType(lm), label(), formals, ss, cs);
   }
 }

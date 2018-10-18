@@ -19,8 +19,7 @@
 package driver;
 
 import compiler.*;
-import java.io.IOException;
-import java.io.PrintWriter;
+import java.io.*;
 import lc.*;
 import mil.*;
 
@@ -36,25 +35,37 @@ class Main {
   }
 
   public static void usage() {
-    System.err.println("usage: java driver.Main [options] inputFile ...");
-    System.err.println("options: -d             debugging on");
-    System.err.println("         -v             verbose on");
+    System.err.println("usage: milc [inputs|options]");
+    System.err.println("inputs:  filename.milc  Load options from specified file");
+    System.err.println(
+        "         filename.mil   Load MIL source from specified file (.lmil for literate)");
+    System.err.println(
+        "         filename.lc    Load LC source from specified file (.llc for literate)");
+    System.err.println("options: -v             verbose on");
+    System.err.println("         -d             display debug messages");
+    System.err.println("         -ipathlist     append items to input search path");
     System.err.println("         -p{c,o,b,s,r}* passes");
     System.err.println("                        c = cfun rewrite");
     System.err.println("                        o = optimizer");
     System.err.println("                        s = specialization (eliminate polymorphism)");
-    System.err.println("                        b = bitdata generation (immediately after s)");
+    System.err.println("                        b = bitdata generation");
     System.err.println(
         "                        r = representation transformation (requires earlier s)");
     System.err.println("         -m[filename]   mil code");
+    System.err.println("         -t[filename]   type definitions");
     System.err.println("         -g[filename]   GraphViz file for mil structure");
     System.err.println("         -c[filename]   type set");
     System.err.println("         -s[filename]   specialization type set (requires s)");
     System.err.println("         -r[filename]   representation type set (requires r)");
     System.err.println("         -l[filename]   LLVM code (requires s)");
+    System.err.println("         -f[filename]   LLVM interface (requires s)");
     System.err.println("         -b[filename]   bytecode text");
     System.err.println("         -x[filename]   execute bytecode");
+    System.err.println("         --mil-main=N   Set name of main function in MIL input");
     System.err.println("         --llvm-main=N  Set name of main function in LLVM output");
+    System.err.println("         --standalone   Equivalent to --mil-main=main --llvm-main=main");
+    System.err.println("         --32 / --64    Set wordsize to 32 / 64 bits");
+    System.err.println("         --target=T     Set LLVM target triple to T");
   }
 
   private boolean trace = false;
@@ -73,66 +84,116 @@ class Main {
 
   private FilenameOption milOutput = new FilenameOption("MIL output file");
 
+  private FilenameOption typeDefnsOutput = new FilenameOption("Type definitions");
+
   private FilenameOption graphvizOutput = new FilenameOption("MIL code GraphViz output");
 
-  private FilenameOption typesetOutput = new FilenameOption("type set output");
+  private FilenameOption typeSetOutput = new FilenameOption("type set output");
 
-  private FilenameOption specTypesetOutput = new FilenameOption("specialization type set output");
+  private FilenameOption specTypeSetOutput = new FilenameOption("specialization type set output");
 
-  private FilenameOption repTypesetOutput = new FilenameOption("representation type set output");
+  private FilenameOption repTypeSetOutput = new FilenameOption("representation type set output");
 
   private FilenameOption llvmOutput = new FilenameOption("llvm output");
+
+  private FilenameOption llvmInterfaceOutput = new FilenameOption("llvm interface");
 
   private FilenameOption bytecodeOutput = new FilenameOption("bytecode output");
 
   private FilenameOption execOutput = new FilenameOption("execution output");
 
-  /** Simple command line option processing. */
-  private void options(String str) throws Failure {
-    String special;
-    if ((special = nonemptyOptString("--llvm-main=", str)) != null) {
-      llvm.FuncDefn.mainFunctionName = special;
-      return;
-    }
-    for (int i = 1; i < str.length(); i++) {
-      switch (str.charAt(i)) {
-        case 'd':
-          debug.Log.on();
-          break;
-        case 'v':
-          trace = true;
-          break;
-        case 'p':
-          addPasses(str.substring(i + 1));
-          return;
-        case 'm':
-          milOutput.setName(str, i);
-          return;
-        case 'g':
-          graphvizOutput.setName(str, i);
-          return;
-        case 'c':
-          typesetOutput.setName(str, i);
-          return;
-        case 's':
-          specTypesetOutput.setName(str, i);
-          return;
-        case 'r':
-          repTypesetOutput.setName(str, i);
-          return;
-        case 'l':
-          llvmOutput.setName(str, i);
-          return;
-        case 'b':
-          bytecodeOutput.setName(str, i);
-          return;
-        case 'x':
-          execOutput.setName(str, i);
-          return;
-        default:
-          throw new Failure("Unrecognized option character '" + str.charAt(i) + "'");
+  private String milMain = "";
+
+  /** Simple command line argument processing. */
+  private void options(Handler handler, String str, LCLoader loader, boolean nested)
+      throws Failure {
+    if (str.startsWith("-")) {
+      String special;
+      if ((special = nonemptyOptString("--llvm-main=", str)) != null) {
+        llvm.FuncDefn.mainFunctionName = special;
+        return;
+      } else if ((special = nonemptyOptString("--mil-main=", str)) != null) {
+        milMain = special;
+        return;
+      } else if (optMatches("--standalone", str)) {
+        milMain = llvm.FuncDefn.mainFunctionName = "main";
+        return;
+      } else if ((special = nonemptyOptString("--target=", str)) != null) {
+        llvm.Program.targetTriple = special;
+        return;
+      } else if (optMatches("--32", str)) {
+        Word.setSize(32);
+        return;
+      } else if (optMatches("--64", str)) {
+        Word.setSize(64);
+        return;
       }
+      for (int i = 1; i < str.length(); i++) {
+        switch (str.charAt(i)) {
+          case 'd':
+            debug.Log.on();
+            break;
+          case 'v':
+            trace = true;
+            break;
+          case 'i':
+            loader.extendSearchPath(str, i + 1);
+            return;
+          case 'p':
+            addPasses(str.substring(i + 1));
+            return;
+          case 'm':
+            milOutput.setName(str, i);
+            return;
+          case 't':
+            typeDefnsOutput.setName(str, i);
+            return;
+          case 'g':
+            graphvizOutput.setName(str, i);
+            return;
+          case 'c':
+            typeSetOutput.setName(str, i);
+            return;
+          case 's':
+            specTypeSetOutput.setName(str, i);
+            return;
+          case 'r':
+            repTypeSetOutput.setName(str, i);
+            return;
+          case 'l':
+            llvmOutput.setName(str, i);
+            return;
+          case 'f':
+            llvmInterfaceOutput.setName(str, i);
+            return;
+          case 'b':
+            bytecodeOutput.setName(str, i);
+            return;
+          case 'x':
+            execOutput.setName(str, i);
+            return;
+          default:
+            throw new Failure("Unrecognized option character '" + str.charAt(i) + "'");
+        }
+      }
+    } else if (str.endsWith(".milc")) {
+      if (nested) {
+        throw new Failure("Cannot read options from nested configuration file \"" + str + "\"");
+      } else if (!optionsFromFile(handler, str, loader, true)) {
+        throw new Failure("Error reading options from \"" + str + "\"; file not accessible");
+      }
+    } else if (!loader.loadMIL(str)) { // Try to load as mil
+      loader.require(str); // But otherwise load as lc
     }
+  }
+
+  private static boolean optMatches(String opt, String str) throws Failure {
+    if (!str.startsWith(opt)) {
+      return false;
+    } else if (!str.equals(opt)) {
+      throw new Failure("Extra characters on command line option \"" + str + "\"");
+    }
+    return true;
   }
 
   private static String optString(String prefix, String str) {
@@ -145,6 +206,23 @@ class Main {
       throw new Failure("Missing value for option " + prefix);
     }
     return s;
+  }
+
+  private boolean optionsFromFile(Handler handler, String name, LCLoader loader, boolean nested)
+      throws Failure {
+    try {
+      message("Reading options from " + name + " ...");
+      Reader reader = new FileReader(name);
+      Source source = new OptionSource(handler, reader, name);
+      String line;
+      while ((line = source.readLine()) != null) {
+        options(handler, line, loader, true);
+      }
+      source.close();
+      return true;
+    } catch (FileNotFoundException e) {
+      return false;
+    }
   }
 
   public void run(String[] args) {
@@ -162,18 +240,20 @@ class Main {
    * produce a single MIL program.
    */
   private MILProgram load(Handler handler, String[] args) throws Failure {
-    // TODO: initial message will not appear so long as trace is initialized to false :-)
-    message("Process arguments ..."); // Process command line arguments
+    // TODO: initial messages will not appear so long as trace is initialized to false :-)
     LCLoader loader = new LCLoader();
-    for (int i = 0; i < args.length; i++) {
-      if (args[i].startsWith("-")) {
-        options(args[i]);
-      } else if (!loader.loadMIL(args[i])) { // Try to load as mil
-        loader.require(args[i]); // But otherwise load as lc
-      }
+    if (optionsFromFile(handler, ".milc", loader, false)) {
+      message("Read options from .milc ..."); // Process options in .milc file, if present
     }
+    ;
+    message("Reading command line arguments ..."); // Process command line arguments
+    for (int i = 0; i < args.length; i++) {
+      options(handler, args[i], loader, false);
+    }
+    handler.abortOnFailures();
+
     message("Loading source files ..."); // Load and compile everything
-    MILProgram mil = loader.load(handler);
+    MILProgram mil = loader.load(handler, milMain);
 
     message("Running type checker ..."); // Sanity check/dependency analysis
     mil.typeChecking(handler);
@@ -184,7 +264,8 @@ class Main {
   private void process(Handler handler, MILProgram mil) throws Failure {
     MILSpec spec = null;
     RepTypeSet rep = null;
-    boolean optimized = false; // Keep track whether the optimizer has been run
+    boolean optimized = false; // Keep track of whether the optimizer has been run
+    boolean cfunRewrite = false; // Keep track of whether the cfun rewrite has been run
 
     if (passes == null) {
       // If no passes are specified, try to set some sensible defaults to satisfy
@@ -193,17 +274,20 @@ class Main {
       // a prior 's', or an attempt to generate LLVM code without specialization).
 
       passes =
-          llvmOutput.isSet()
+          (llvmOutput.isSet() || llvmInterfaceOutput.isSet())
               ? "cosboro"
-              : repTypesetOutput.isSet() ? "cosor" : specTypesetOutput.isSet() ? "cos" : "co";
+              : execOutput.isSet()
+                  ? "cosboro"
+                  : repTypeSetOutput.isSet() ? "cosor" : specTypeSetOutput.isSet() ? "cos" : "co";
       message("Defaulting to passes \"" + passes + "\":");
     }
 
     for (int i = 0; i < passes.length(); i++) {
       switch (passes.charAt(i)) {
         case 'c': // Constructor function rewrite
-          message("Performing constructor function rewrite ...");
+          message("Running constructor function rewrite ...");
           mil.cfunRewrite();
+          cfunRewrite = true;
           optimized = false;
           break;
 
@@ -223,19 +307,21 @@ class Main {
 
         case 'b': // Bitdata generation
           message("Running bitdata generation ...");
-          if (i == 0 || passes.charAt(i - 1) != 's') {
-            throw new Failure(
-                "Bitdata generation can only be used immediately after a specialization pass");
-          }
-          mil.bitdataRewrite(spec.bitdataCandidates());
+          mil.bitdataRewrite();
           optimized = false;
+          if (spec != null) {
+            External.setBitdataRepresentations();
+          }
           break;
 
         case 'r': // Representation transformation
           message("Running representation transformation ...");
-          if (spec == null) {
+          if (!cfunRewrite) {
             throw new Failure(
-                "Representation transformation only valid after an earlier specialization pass");
+                "Representation transformation requires an earlier constructor function rewrite");
+          } else if (spec == null) {
+            throw new Failure(
+                "Representation transformation requires an earlier specialization pass");
           }
           rep = mil.repTransform(handler);
           handler.abortOnFailures();
@@ -253,6 +339,12 @@ class Main {
     output(handler, mil, spec, rep, optimized);
   }
 
+  /** Encapsulates an action to be performed involving writing to a specified PrintWriter. */
+  abstract static class Action {
+
+    abstract void run(PrintWriter out) throws Failure;
+  }
+
   /**
    * Generate any outputs that have been requested in this program, passing in the final resuts of
    * the compilation passes as arguments.
@@ -265,16 +357,7 @@ class Main {
       final boolean optimized)
       throws Failure {
 
-    typesetOutput.run(
-        new Action() {
-          void run(PrintWriter out) {
-            TypeSet set = new TypeSet();
-            mil.collect(set);
-            set.dump(out);
-          }
-        });
-
-    specTypesetOutput.run(
+    specTypeSetOutput.run(
         new Action() {
           void run(PrintWriter out) throws Failure {
             if (spec == null) {
@@ -286,7 +369,7 @@ class Main {
           }
         });
 
-    repTypesetOutput.run(
+    repTypeSetOutput.run(
         new Action() {
           void run(PrintWriter out) throws Failure {
             if (rep == null) {
@@ -298,12 +381,29 @@ class Main {
           }
         });
 
-    milOutput.run(
-        new Action() {
-          void run(PrintWriter out) {
-            mil.dump(out);
-          }
-        });
+    if (typeSetOutput.isSet() || typeDefnsOutput.isSet() || milOutput.isSet()) {
+      final TypeSet set = new TypeSet();
+      mil.collect(set);
+      typeSetOutput.run(
+          new Action() {
+            void run(PrintWriter out) {
+              set.dump(out);
+            }
+          });
+      typeDefnsOutput.run(
+          new Action() {
+            void run(PrintWriter out) {
+              set.dumpTypeDefinitions(out);
+            }
+          });
+      milOutput.run(
+          new Action() {
+            void run(PrintWriter out) {
+              set.dumpTypeDefinitions(out);
+              mil.dump(out);
+            }
+          });
+    }
 
     graphvizOutput.run(
         new Action() {
@@ -312,18 +412,26 @@ class Main {
           }
         });
 
-    llvmOutput.run(
-        new Action() {
-          void run(PrintWriter out) throws Failure {
-            if (!optimized) {
-              throw new Failure("An optimization pass is required for LLVM output");
-            } else if (spec == null) {
-              throw new Failure("A specialization pass is required for LLVM output");
-            } else {
-              mil.toLLVM().dump(out);
+    if (llvmOutput.isSet() || llvmInterfaceOutput.isSet()) {
+      if (spec == null) {
+        throw new Failure("A specialization pass is required for LLVM output");
+      } else if (rep == null) {
+        throw new Failure("A representation pass is required for LLVM output");
+      }
+      final llvm.Program llvmProg = mil.toLLVM();
+      llvmOutput.run(
+          new Action() {
+            void run(PrintWriter out) throws Failure {
+              llvmProg.dump(out);
             }
-          }
-        });
+          });
+      llvmInterfaceOutput.run(
+          new Action() {
+            void run(PrintWriter out) throws Failure {
+              llvmProg.dumpInterface(out);
+            }
+          });
+    }
 
     if (bytecodeOutput.isSet() || execOutput.isSet()) {
       final MachineBuilder builder = mil.generateMachineBuilder(handler);

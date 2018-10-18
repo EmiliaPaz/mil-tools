@@ -47,25 +47,25 @@ class EBitdata extends EConstruct {
 
   private Cfun cf;
 
-  private BitdataName bn;
+  private BitdataType bt;
 
   private BitdataLayout layout;
 
   private int[] invmap;
 
   /**
-   * Perform a scope analysis on this expression, creating a Temp object for each variable binding,
-   * checking that all of the identifiers that it references correspond to bound variables, and
-   * returning the set of free variables in the term.
+   * Perform scope analysis on this expression, creating a Temp for each variable binding, checking
+   * that all of the identifiers it references correspond to bound variables, and returning the set
+   * of free variables in the term.
    */
   DefVars inScopeOf(Handler handler, MILEnv milenv, Env env) { // id [ fields ]
     cf = milenv.findCfun(id);
     if (cf == null) {
       handler.report(new UnknownConstructorFailure(pos, id));
-    } else if ((bn = cf.bitdataName()) == null) {
+    } else if ((bt = cf.bitdataType()) == null) {
       handler.report(new BitdataRequiredFailure(pos, cf));
     } else {
-      layout = bn.getLayouts()[cf.getNum()];
+      layout = bt.getLayouts()[cf.getNum()];
     }
     return EField.inScopeOf(handler, milenv, env, null, fields);
   }
@@ -84,7 +84,7 @@ class EBitdata extends EConstruct {
       int p = fields[i].checkTypeConstruct(tis, cf, lfields);
       if (map[p] != 0) {
         throw new Failure(
-            fields[i].getPosition(),
+            fields[i].getPos(),
             "Constructor includes multiple definitions for field \"" + lfields[p] + "\"");
       }
       map[p] = 1 + i; // Add one to avoid confusion with 0th element ...
@@ -107,7 +107,7 @@ class EBitdata extends EConstruct {
         invmap[map[p] - 1] = p;
       }
     }
-    return bn.asType();
+    return bt.asType();
   }
 
   /** Compile an expression into a Tail. */

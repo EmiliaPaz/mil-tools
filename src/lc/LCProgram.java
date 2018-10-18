@@ -35,6 +35,11 @@ public class LCProgram extends CoreProgram {
     this.name = name;
   }
 
+  /** Return the name for this program. */
+  public String getName() {
+    return name;
+  }
+
   private TopDefns topDefns = null;
 
   private TopDefns topDefnsLast = null;
@@ -62,14 +67,17 @@ public class LCProgram extends CoreProgram {
   public void syntaxAnalysis(Handler handler, LCLoader loader) throws Failure {
     debug.Log.println("Loading " + name + " ...");
     try {
-      Reader reader = new FileReader(name);
+      Reader reader = new FileReader(loader.findFile(handler, name));
       Source source = new JavaSource(handler, name, reader);
+      if (name.endsWith(".llc")) {
+        source = new LiterateSource(handler, true, source);
+      }
       source = new CacheSource(handler, source);
       LCLexer lexer = new LCLexer(handler, true, source);
       LCParser parser = new LCParser(handler, lexer, loader);
       parser.parse(this);
     } catch (FileNotFoundException e) {
-      throw new Failure("Cannot open input file " + name);
+      throw new Failure("Cannot open input file \"" + name + "\"");
     }
     handler.abortOnFailures();
   }
@@ -99,15 +107,14 @@ public class LCProgram extends CoreProgram {
   public void scopeAnalysis(Handler handler, MILEnv milenv) throws Failure {
     // Extract the bindings from the definitions in this program:
     bindings = LCDefns.toBindings(handler, milenv.getTyconEnv(), defns);
-    // !   display(new Screen());
     defns = null; // not needed beyond this point
 
     // Build an environment with entries for a list of top-level bindings:
     Env env = new BindingsEnv(null, bindings);
 
-    // Check that exports and entrypoints are in scope:
+    // Add environment entries for symbols introduced in top-level definitions:
     for (TopDefns tds = topDefns; tds != null; tds = tds.next) {
-      tds.head.scopeTopDefn(handler, milenv, env);
+      tds.head.validateTopDefn(handler, milenv);
     }
 
     // Visit each binding in the list of top-level bindings:
@@ -117,17 +124,25 @@ public class LCProgram extends CoreProgram {
       bs.head.inScopeOf(handler, milenv, bindings, env);
     }
 
+    // Scope analysis on expressions in top-level definitions and check that exports and entrypoints
+    // are in scope:
+    for (TopDefns tds = topDefns; tds != null; tds = tds.next) {
+      tds.head.scopeTopDefn(handler, milenv, env);
+    }
+
     // Check every expression that appears in a core definition:
     super.inScopeOf(handler, milenv, env);
 
     // Compute the strongly connected components:
     sccs = Bindings.scc(bindings);
     BindingSCC.checkSafeRecursion(handler, sccs);
-    // ! BindingSCCs.display("program bindings", sccs); // TODO: debug code; remove.
   }
 
   public void typeAnalysis(Handler handler) throws Failure {
     BindingSCCs.inferTypes(handler, null, sccs);
+    for (TopDefns tds = topDefns; tds != null; tds = tds.next) {
+      tds.head.inferTypes(handler);
+    }
     super.inferTypes(handler);
   }
 
@@ -138,7 +153,6 @@ public class LCProgram extends CoreProgram {
     // TODO: is the following line necessary?
     // sccs = null; // Invalidate sccs now that new bindings have been added:
     liftTopDefns(lenv);
-    // !   lenv.dump();
     return lenv.getLifted();
   }
 
@@ -225,11 +239,6 @@ public class LCProgram extends CoreProgram {
     }
   }
 
-  /** Return the name for this program. */
-  public String getName() {
-    return name;
-  }
-
   /** Run static analysis on this LC program. */
   MILEnv staticAnalysis(Handler handler, MILEnv milenv) throws Failure {
     // Validate type definitions, recording the results in a corresponding type environment:
@@ -237,21 +246,14 @@ public class LCProgram extends CoreProgram {
 
     // Build a new MILEnv for this program:
     milenv = this.newmil(handler, tenv, milenv);
-    // !   milenv.print();
 
     // Run scope analysis on the LC program:
     this.scopeAnalysis(handler, milenv);
     handler.abortOnFailures();
-    // !
-    // !   System.out.println("BEFORE type checking:");
-    // !   new IndentOutput(System.out).indent(this);
 
     // Run type analysis on the LC program:
     this.typeAnalysis(handler);
     handler.abortOnFailures();
-    // !
-    // !   System.out.println("AFTER type checking:");
-    // !   new IndentOutput(System.out).indent(this);
 
     return milenv;
   }
@@ -261,14 +263,13 @@ public class LCProgram extends CoreProgram {
    * but that can wait until all files have been loaded.
    */
   void compile(MILProgram mil, MILEnv milenv) {
-    // !   this.display(new Screen());        // Show the result of static analysis
     TopBindings tbs = lambdaLift(); // Lift out definitions of recursive functions
-    // !   System.out.println("AFTER lambda lifting:");
-    // !   this.display(new Screen());        // Show the result of lambda lifting
-    // !   new IndentOutput(System.out).indent(this);
     addExports(mil, milenv); // Process exports and entry points
     for (; tbs != null; tbs = tbs.next) { // Generate MIL code from LC
       tbs.head.compile();
+    }
+    for (TopDefns tds = topDefns; tds != null; tds = tds.next) {
+      tds.head.compileTopDefn();
     }
   }
 

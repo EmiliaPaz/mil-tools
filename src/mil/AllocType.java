@@ -22,6 +22,7 @@ import compiler.*;
 import compiler.Failure;
 import compiler.Position;
 import core.*;
+import java.io.PrintWriter;
 import obdd.Pat;
 
 /**
@@ -111,8 +112,12 @@ public class AllocType {
     return this;
   }
 
+  Type[] tenv() {
+    return null;
+  }
+
   void storedUnifiesWith(Position pos, Type[] inputs) throws Failure {
-    storedUnifiesWith(pos, null, inputs);
+    storedUnifiesWith(pos, tenv(), inputs);
   }
 
   void storedUnifiesWith(Position pos, Type[] tenv, Type[] inputs) throws Failure {
@@ -131,7 +136,7 @@ public class AllocType {
   }
 
   void resultUnifiesWith(Position pos, Type type) throws Failure {
-    result.unify(pos, null, type, null);
+    result.unify(pos, tenv(), type, null);
   }
 
   Type alloc(Position pos, Type[] inputs) throws Failure {
@@ -145,7 +150,7 @@ public class AllocType {
   }
 
   TVars tvars(TVars tvs) {
-    return tvars(null, tvs);
+    return tvars(tenv(), tvs);
   }
 
   protected TVars tvars(Type[] tenv, TVars tvs) {
@@ -160,7 +165,7 @@ public class AllocType {
    * variables.
    */
   public AllocType generalize(TVar[] generics) {
-    return generalize(generics, null);
+    return generalize(generics, tenv());
   }
 
   /**
@@ -204,9 +209,9 @@ public class AllocType {
     return this.result.alphaType(left.result, corresp);
   }
 
-  /** Test to see if this allocator type is polymorphic. */
-  public boolean isQuantified() {
-    return false;
+  /** Test to see if this allocator type is monomorphic. */
+  public AllocType isMonomorphic() {
+    return this;
   }
 
   /** Determine if two allocator types can be matched. */
@@ -222,9 +227,16 @@ public class AllocType {
     return true;
   }
 
-  /** Return the bit pattern for the ith stored component of this AllocType. */
-  Pat bitPat(int i) {
-    return stored[i].bitPat(null);
+  void dump(PrintWriter out, Type head) {
+    Type[] tenv = tenv();
+    if (result.match(tenv, head, null)) {
+      for (int i = 0; i < stored.length; i++) {
+        out.print(" ");
+        out.print(stored[i].skeleton(tenv).toString(TypeWriter.ALWAYS));
+      }
+    } else {
+      debug.Internal.error("result type does not match " + head);
+    }
   }
 
   /**
@@ -298,6 +310,11 @@ public class AllocType {
     return offset;
   }
 
+  /** Return the bit pattern for the ith stored component of this AllocType. */
+  Pat bitPat(int i) {
+    return stored[i].bitPat(null);
+  }
+
   /**
    * Construct an AllocType from a collection of type expressions that describe the types of the
    * stored components and the type of the constructed result.
@@ -325,7 +342,7 @@ public class AllocType {
    * constructor.
    */
   llvm.Type cfunLayoutTypeCalc(LLVMMap lm) {
-    return structLayoutCalc(lm, LLVMMap.tagType);
+    return structLayoutCalc(lm, LLVMMap.tagType());
   }
 
   /**
@@ -333,10 +350,11 @@ public class AllocType {
    * type.
    */
   private llvm.StructType structLayoutCalc(LLVMMap lm, llvm.Type tag) {
-    llvm.Type[] tys = new llvm.Type[1 + stored.length];
+    Type[] nustored = Type.nonUnits(stored);
+    llvm.Type[] tys = new llvm.Type[1 + nustored.length];
     tys[0] = tag;
-    for (int i = 0; i < stored.length; i++) {
-      tys[i + 1] = lm.toLLVM(stored[i]);
+    for (int i = 0; i < nustored.length; i++) {
+      tys[i + 1] = lm.toLLVM(nustored[i]);
     }
     return new llvm.StructType(tys);
   }

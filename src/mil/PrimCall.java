@@ -38,7 +38,7 @@ public class PrimCall extends Call {
     return p.hasNoEffect();
   }
 
-  /** Test to see if two Tail expressions are the same. */
+  /** Test if two Tail expressions are the same. */
   public boolean sameTail(Tail that) {
     return that.samePrimCall(this);
   }
@@ -48,17 +48,14 @@ public class PrimCall extends Call {
   }
 
   /** Display a printable representation of this MIL construct on the specified PrintWriter. */
-  public void dump(PrintWriter out) {
-    dump(out, p.getId(), "((", args, "))");
+  public void dump(PrintWriter out, Temps ts) {
+    dump(out, p.getId(), "((", args, "))", ts);
   }
 
   /** Construct a new Call value that is based on the receiver, without copying the arguments. */
   Call callDup(Atom[] args) {
     return p.withArgs(args);
   }
-
-  /** Represents a tail expression that halts/terminates the current program. */
-  public static final Call halt = Prim.halt.withArgs();
 
   private BlockType type;
 
@@ -101,23 +98,24 @@ public class PrimCall extends Call {
     return p.doesntReturn();
   }
 
-  public static final Call loop = Prim.loop.withArgs();
+  /**
+   * Return true if this code enters a non-productive black hole (i.e., immediately calls halt or
+   * loop).
+   */
+  boolean blackholes() {
+    return p.blackholes();
+  }
+
+  boolean noinline() {
+    return p == Prim.noinline;
+  }
 
   /**
    * Skip goto blocks in a Tail (for a ClosureDefn or TopLevel). TODO: can this be simplified now
    * that ClosureDefns hold Tails rather than Calls?
    */
   public Tail inlineTail() {
-    // !System.out.println("PrimCall was: "); this.dump(); System.out.println();
     Code c = this.rewritePrimCall(null);
-    // !System.out.println("Resulting code is:");
-    // !if (c==null) {
-    // !  System.out.println("  --null--");
-    // !} else {
-    // !  this.dump();
-    // !  System.out.println();
-    // !}
-    // !
     return (c == null) ? this : c.forceToTail(this);
   }
 
@@ -150,31 +148,31 @@ public class PrimCall extends Call {
 
     if (p == Prim.bnot) {
       Atom x = args[0];
-      FlagConst a = x.isFlagConst();
+      Flag a = x.isFlag();
       return (a == null) ? bnotVar(x, facts) : Prim.bnot.fold(a.getVal());
     }
 
     if (p == Prim.not) {
       Atom x = args[0];
-      IntConst a = x.isIntConst();
+      Word a = x.isWord();
       return (a == null) ? notVar(x, facts) : Prim.not.fold(a.getVal());
     }
 
     if (p == Prim.neg) {
       Atom x = args[0];
-      IntConst a = x.isIntConst();
+      Word a = x.isWord();
       return (a == null) ? negVar(x, facts) : Prim.neg.fold(a.getVal());
     }
 
     if (p == Prim.flagToWord) {
       Atom x = args[0];
-      FlagConst a = x.isFlagConst();
+      Flag a = x.isFlag();
       return (a == null) ? flagToWordVar(x, facts) : Prim.flagToWord.fold(a.getVal());
     }
 
     if (p == Prim.add) {
       Atom x = args[0], y = args[1];
-      IntConst a = x.isIntConst(), b = y.isIntConst();
+      Word a = x.isWord(), b = y.isWord();
       if (a == null) {
         return (b == null) ? addVarVar(x, y, facts) : addVarConst(x, b.getVal(), facts);
       } else if (b == null) {
@@ -187,7 +185,7 @@ public class PrimCall extends Call {
 
     if (p == Prim.mul) {
       Atom x = args[0], y = args[1];
-      IntConst a = x.isIntConst(), b = y.isIntConst();
+      Word a = x.isWord(), b = y.isWord();
       if (a == null) {
         return (b == null) ? mulVarVar(x, y, facts) : mulVarConst(x, b.getVal(), facts);
       } else if (b == null) {
@@ -200,7 +198,7 @@ public class PrimCall extends Call {
 
     if (p == Prim.or) {
       Atom x = args[0], y = args[1];
-      IntConst a = x.isIntConst(), b = y.isIntConst();
+      Word a = x.isWord(), b = y.isWord();
       if (a == null) {
         return (b == null) ? orVarVar(x, y, facts) : orVarConst(x, b.getVal(), facts);
       } else if (b == null) {
@@ -213,7 +211,7 @@ public class PrimCall extends Call {
 
     if (p == Prim.and) {
       Atom x = args[0], y = args[1];
-      IntConst a = x.isIntConst(), b = y.isIntConst();
+      Word a = x.isWord(), b = y.isWord();
       if (a == null) {
         return (b == null) ? andVarVar(x, y, facts) : andVarConst(x, b.getVal(), facts);
       } else if (b == null) {
@@ -226,7 +224,7 @@ public class PrimCall extends Call {
 
     if (p == Prim.xor) {
       Atom x = args[0], y = args[1];
-      IntConst a = x.isIntConst(), b = y.isIntConst();
+      Word a = x.isWord(), b = y.isWord();
       if (a == null) {
         return (b == null) ? xorVarVar(x, y, facts) : xorVarConst(x, b.getVal(), facts);
       } else if (b == null) {
@@ -240,8 +238,8 @@ public class PrimCall extends Call {
     if (p == Prim.sub) {
       Atom x = args[0];
       Atom y = args[1];
-      IntConst a = x.isIntConst();
-      IntConst b = y.isIntConst();
+      Word a = x.isWord();
+      Word b = y.isWord();
       return (a == null)
           ? ((b == null) ? subVarVar(x, y, facts) : subVarConst(x, b.getVal(), facts))
           : ((b == null)
@@ -252,8 +250,8 @@ public class PrimCall extends Call {
     if (p == Prim.shl) {
       Atom x = args[0];
       Atom y = args[1];
-      IntConst a = x.isIntConst();
-      IntConst b = y.isIntConst();
+      Word a = x.isWord();
+      Word b = y.isWord();
       return (a == null)
           ? ((b == null) ? shlVarVar(x, y, facts) : shlVarConst(x, b.getVal(), facts))
           : ((b == null)
@@ -264,8 +262,8 @@ public class PrimCall extends Call {
     if (p == Prim.lshr) {
       Atom x = args[0];
       Atom y = args[1];
-      IntConst a = x.isIntConst();
-      IntConst b = y.isIntConst();
+      Word a = x.isWord();
+      Word b = y.isWord();
       return (a == null)
           ? ((b == null) ? lshrVarVar(x, y, facts) : lshrVarConst(x, b.getVal(), facts))
           : ((b == null)
@@ -276,8 +274,8 @@ public class PrimCall extends Call {
     if (p == Prim.ashr) {
       Atom x = args[0];
       Atom y = args[1];
-      IntConst a = x.isIntConst();
-      IntConst b = y.isIntConst();
+      Word a = x.isWord();
+      Word b = y.isWord();
       return (a == null)
           ? ((b == null) ? ashrVarVar(x, y, facts) : ashrVarConst(x, b.getVal(), facts))
           : ((b == null)
@@ -285,25 +283,28 @@ public class PrimCall extends Call {
               : Prim.ashr.fold(a.getVal(), b.getVal()));
     }
 
-    if (p == Prim.nzdiv) {
-      Atom y = args[1];
-      int d = args[1].getNZConst();
-      if (d > 0) { // Look for a constant denominator
+    // TODO: We use instanceof below because representation transformation can replace nzdiv
+    // with a new canonical form that has a different type.  Perhaps we should use instanceof
+    // throughout instead of testing for equality with Prim.XXX?
+    if (p instanceof Prim.nzdiv || p == Prim.div) {
+      Word y = args[1].isWord();
+      long d;
+      if (y != null && (d = y.getVal()) > 0) { // Look for a constant denominator
         Atom x = args[0];
-        IntConst a = x.isIntConst();
+        Word a = x.isWord();
         if (a != null) {
-          int n = a.getVal(); // Look for a constant numerator
+          long n = a.getVal(); // Look for a constant numerator
           if (n > 0) { // To be cautious, only consider positive values
             MILProgram.report("constant folding for nzdiv");
-            return done(new IntConst(n / d));
+            return done(new Word(n / d));
           }
         }
         if (d == 1) { // Look for a (redundant) divide by 1
           return done(x);
         }
-        if ((d & (d - 1)) == 0) { // Look for division by a power of two, d=(1<<n)
+        if ((d & (d - 1)) == 0) { // Look for division by a power of two, d=(1L<<n)
           int n = 1; // Calculate the value of n
-          for (int i = (d >>> 1); (i >>>= 1) > 0; n++) {
+          for (long i = (d >>> 1); (i >>>= 1) > 0; n++) {
             /* no extra work here */
           }
           MILProgram.report("rewrite: nzdiv((x, " + d + ")) ==> lshr((x, " + n + "))");
@@ -316,9 +317,9 @@ public class PrimCall extends Call {
     if (p == Prim.eq) {
       Atom x = args[0];
       Atom y = args[1];
-      IntConst a = x.isIntConst();
+      Word a = x.isWord();
       if (a != null) {
-        IntConst b = y.isIntConst();
+        Word b = y.isWord();
         if (b != null) {
           return Prim.eq.fold(a.getVal(), b.getVal());
         }
@@ -329,9 +330,9 @@ public class PrimCall extends Call {
     if (p == Prim.neq) {
       Atom x = args[0];
       Atom y = args[1];
-      IntConst a = x.isIntConst();
+      Word a = x.isWord();
       if (a != null) {
-        IntConst b = y.isIntConst();
+        Word b = y.isWord();
         if (b != null) {
           return Prim.neq.fold(a.getVal(), b.getVal());
         }
@@ -342,9 +343,9 @@ public class PrimCall extends Call {
     if (p == Prim.slt) {
       Atom x = args[0];
       Atom y = args[1];
-      IntConst a = x.isIntConst();
+      Word a = x.isWord();
       if (a != null) {
-        IntConst b = y.isIntConst();
+        Word b = y.isWord();
         if (b != null) {
           return Prim.slt.fold(a.getVal(), b.getVal());
         }
@@ -355,9 +356,9 @@ public class PrimCall extends Call {
     if (p == Prim.sgt) {
       Atom x = args[0];
       Atom y = args[1];
-      IntConst a = x.isIntConst();
+      Word a = x.isWord();
       if (a != null) {
-        IntConst b = y.isIntConst();
+        Word b = y.isWord();
         if (b != null) {
           return Prim.sgt.fold(a.getVal(), b.getVal());
         }
@@ -368,9 +369,9 @@ public class PrimCall extends Call {
     if (p == Prim.sle) {
       Atom x = args[0];
       Atom y = args[1];
-      IntConst a = x.isIntConst();
+      Word a = x.isWord();
       if (a != null) {
-        IntConst b = y.isIntConst();
+        Word b = y.isWord();
         if (b != null) {
           return Prim.sle.fold(a.getVal(), b.getVal());
         }
@@ -381,9 +382,9 @@ public class PrimCall extends Call {
     if (p == Prim.sge) {
       Atom x = args[0];
       Atom y = args[1];
-      IntConst a = x.isIntConst();
+      Word a = x.isWord();
       if (a != null) {
-        IntConst b = y.isIntConst();
+        Word b = y.isWord();
         if (b != null) {
           return Prim.sge.fold(a.getVal(), b.getVal());
         }
@@ -394,9 +395,9 @@ public class PrimCall extends Call {
     if (p == Prim.ult) {
       Atom x = args[0];
       Atom y = args[1];
-      IntConst a = x.isIntConst();
+      Word a = x.isWord();
       if (a != null) {
-        IntConst b = y.isIntConst();
+        Word b = y.isWord();
         if (b != null) {
           return Prim.ult.fold(a.getVal(), b.getVal());
         }
@@ -407,9 +408,9 @@ public class PrimCall extends Call {
     if (p == Prim.ugt) {
       Atom x = args[0];
       Atom y = args[1];
-      IntConst a = x.isIntConst();
+      Word a = x.isWord();
       if (a != null) {
-        IntConst b = y.isIntConst();
+        Word b = y.isWord();
         if (b != null) {
           return Prim.ugt.fold(a.getVal(), b.getVal());
         }
@@ -420,9 +421,9 @@ public class PrimCall extends Call {
     if (p == Prim.ule) {
       Atom x = args[0];
       Atom y = args[1];
-      IntConst a = x.isIntConst();
+      Word a = x.isWord();
       if (a != null) {
-        IntConst b = y.isIntConst();
+        Word b = y.isWord();
         if (b != null) {
           return Prim.ule.fold(a.getVal(), b.getVal());
         }
@@ -433,9 +434,9 @@ public class PrimCall extends Call {
     if (p == Prim.uge) {
       Atom x = args[0];
       Atom y = args[1];
-      IntConst a = x.isIntConst();
+      Word a = x.isWord();
       if (a != null) {
-        IntConst b = y.isIntConst();
+        Word b = y.isWord();
         if (b != null) {
           return Prim.uge.fold(a.getVal(), b.getVal());
         }
@@ -446,9 +447,9 @@ public class PrimCall extends Call {
     if (p == Prim.beq) {
       Atom x = args[0];
       Atom y = args[1];
-      FlagConst a = x.isFlagConst();
+      Flag a = x.isFlag();
       if (a != null) {
-        FlagConst b = y.isFlagConst();
+        Flag b = y.isFlag();
         if (b != null) {
           return Prim.beq.fold(a.getVal(), b.getVal());
         }
@@ -459,9 +460,9 @@ public class PrimCall extends Call {
     if (p == Prim.bxor) {
       Atom x = args[0];
       Atom y = args[1];
-      FlagConst a = x.isFlagConst();
+      Flag a = x.isFlag();
       if (a != null) {
-        FlagConst b = y.isFlagConst();
+        Flag b = y.isFlag();
         if (b != null) {
           return Prim.bxor.fold(a.getVal(), b.getVal());
         }
@@ -472,9 +473,9 @@ public class PrimCall extends Call {
     if (p == Prim.blt) {
       Atom x = args[0];
       Atom y = args[1];
-      FlagConst a = x.isFlagConst();
+      Flag a = x.isFlag();
       if (a != null) {
-        FlagConst b = y.isFlagConst();
+        Flag b = y.isFlag();
         if (b != null) {
           return Prim.blt.fold(a.getVal(), b.getVal());
         }
@@ -485,9 +486,9 @@ public class PrimCall extends Call {
     if (p == Prim.bgt) {
       Atom x = args[0];
       Atom y = args[1];
-      FlagConst a = x.isFlagConst();
+      Flag a = x.isFlag();
       if (a != null) {
-        FlagConst b = y.isFlagConst();
+        Flag b = y.isFlag();
         if (b != null) {
           return Prim.bgt.fold(a.getVal(), b.getVal());
         }
@@ -498,9 +499,9 @@ public class PrimCall extends Call {
     if (p == Prim.ble) {
       Atom x = args[0];
       Atom y = args[1];
-      FlagConst a = x.isFlagConst();
+      Flag a = x.isFlag();
       if (a != null) {
-        FlagConst b = y.isFlagConst();
+        Flag b = y.isFlag();
         if (b != null) {
           return Prim.ble.fold(a.getVal(), b.getVal());
         }
@@ -511,9 +512,9 @@ public class PrimCall extends Call {
     if (p == Prim.bge) {
       Atom x = args[0];
       Atom y = args[1];
-      FlagConst a = x.isFlagConst();
+      Flag a = x.isFlag();
       if (a != null) {
-        FlagConst b = y.isFlagConst();
+        Flag b = y.isFlag();
         if (b != null) {
           return Prim.bge.fold(a.getVal(), b.getVal());
         }
@@ -524,9 +525,9 @@ public class PrimCall extends Call {
     if (p == Prim.band) {
       Atom x = args[0];
       Atom y = args[1];
-      FlagConst a = x.isFlagConst();
+      Flag a = x.isFlag();
       if (a != null) {
-        FlagConst b = y.isFlagConst();
+        Flag b = y.isFlag();
         if (b != null) {
           return Prim.band.fold(a.getVal(), b.getVal());
         }
@@ -537,19 +538,14 @@ public class PrimCall extends Call {
     if (p == Prim.bor) {
       Atom x = args[0];
       Atom y = args[1];
-      FlagConst a = x.isFlagConst();
+      Flag a = x.isFlag();
       if (a != null) {
-        FlagConst b = y.isFlagConst();
+        Flag b = y.isFlag();
         if (b != null) {
           return Prim.bor.fold(a.getVal(), b.getVal());
         }
       }
       return null;
-    }
-
-    if (p == Prim.load || p == Prim.store) {
-      Atom[] nargs = rewriteAddress(args, facts);
-      return (args == nargs) ? null : done(p, nargs);
     }
 
     return null;
@@ -563,12 +559,12 @@ public class PrimCall extends Call {
     return done(new Return(a));
   }
 
-  static Code done(int n) {
-    return done(new IntConst(n));
+  static Code done(long n) {
+    return done(new Word(n));
   }
 
   static Code done(boolean b) {
-    return done(new FlagConst(b));
+    return done(new Flag(b));
   }
 
   static Code done(Prim p, Atom[] args) {
@@ -583,11 +579,11 @@ public class PrimCall extends Call {
     return done(p.withArgs(a, b));
   }
 
-  static Code done(Prim p, Atom a, int n) {
+  static Code done(Prim p, Atom a, long n) {
     return done(p.withArgs(a, n));
   }
 
-  static Code done(Prim p, int n, Atom b) {
+  static Code done(Prim p, long n, Atom b) {
     return done(p.withArgs(n, b));
   }
 
@@ -686,10 +682,10 @@ public class PrimCall extends Call {
    */
   private static Code redistBin(PrimBinOp p, Prim q, Atom x, Tail a, Atom y, Tail b) {
     Atom[] ap = (a != null) ? a.isPrim(q) : null;
-    IntConst c = (ap != null) ? ap[1].isIntConst() : null;
+    Word c = (ap != null) ? ap[1].isWord() : null;
 
     Atom[] bp = (b != null) ? b.isPrim(q) : null;
-    IntConst d = (bp != null) ? bp[1].isIntConst() : null;
+    Word d = (bp != null) ? bp[1].isWord() : null;
 
     if (c != null) {
       if (d != null) { // (u `q` c) `p` (w `q` d)
@@ -718,7 +714,7 @@ public class PrimCall extends Call {
    * Create code for (a ! b) ! n where ! is a primitive p; a and b are variables; and n is a known
    * constant.
    */
-  private static Code varVarConst(Prim p, Atom a, Atom b, Prim q, int n) {
+  private static Code varVarConst(Prim p, Atom a, Atom b, Prim q, long n) {
     Temp v = new Temp();
     return new Bind(v, p.withArgs(a, b), done(q, v, n));
   }
@@ -748,11 +744,6 @@ public class PrimCall extends Call {
   private static Code addVarVar(Atom x, Atom y, Facts facts) {
     Tail a = x.lookupFact(facts);
     Tail b = y.lookupFact(facts);
-    // ! System.out.print("addVarVar: a=");
-    // ! if (a==null) { System.out.print("null"); } else { a.dump(); }
-    // ! System.out.print(", b=");
-    // ! if (b==null) { System.out.print("null"); } else { b.dump(); }
-    // ! System.out.println();
     if (a != null || b != null) { // Only look for a rewrite if there are some facts
       Code nc;
       // TODO: commuteRearrange calls redistBin, which checks for combinations that cannot
@@ -765,7 +756,7 @@ public class PrimCall extends Call {
     return distAddAnyAny(x, y);
   }
 
-  private static Code addVarConst(Atom x, int m, Facts facts) {
+  private static Code addVarConst(Atom x, long m, Facts facts) {
     if (m == 0) { // x + 0 == x
       MILProgram.report("rewrite: x + 0 ==> x");
       return done(x);
@@ -774,18 +765,18 @@ public class PrimCall extends Call {
     if (a != null) {
       Atom[] ap;
       if ((ap = a.isPrim(Prim.add)) != null) {
-        IntConst c = ap[1].isIntConst();
+        Word c = ap[1].isWord();
         if (c != null) {
           MILProgram.report("rewrite: (x + n) + m == x + (n + m)");
           return done(Prim.add, ap[0], c.getVal() + m);
         }
       } else if ((ap = a.isPrim(Prim.sub)) != null) {
-        IntConst c;
-        if ((c = ap[1].isIntConst()) != null) {
+        Word c;
+        if ((c = ap[1].isWord()) != null) {
           MILProgram.report("rewrite: (x - n) + m == x + (m - n)");
           return done(Prim.add, ap[0], m - c.getVal());
         }
-        if ((c = ap[0].isIntConst()) != null) {
+        if ((c = ap[0].isWord()) != null) {
           MILProgram.report("rewrite: (n - x) + m == (n + m) - x");
           return done(Prim.add, c.getVal() + m, ap[1]);
         }
@@ -803,8 +794,8 @@ public class PrimCall extends Call {
       if ((ap = a.isPrim(Prim.neg)) != null) {
         return distAddNeg(ap[0], y, b);
       }
-      IntConst m;
-      if ((ap = a.isPrim(Prim.mul)) != null && (m = ap[1].isIntConst()) != null) {
+      Word m;
+      if ((ap = a.isPrim(Prim.mul)) != null && (m = ap[1].isWord()) != null) {
         return distAddCMul(x, ap[0], m.getVal(), y, b);
       }
     }
@@ -817,8 +808,8 @@ public class PrimCall extends Call {
       if ((ap = a.isPrim(Prim.neg)) != null) {
         return distSubNeg(ap[0], y, b);
       }
-      IntConst m;
-      if ((ap = a.isPrim(Prim.mul)) != null && (m = ap[1].isIntConst()) != null) {
+      Word m;
+      if ((ap = a.isPrim(Prim.mul)) != null && (m = ap[1].isWord()) != null) {
         return distSubCMul(x, ap[0], m.getVal(), y, b);
       }
     }
@@ -828,11 +819,11 @@ public class PrimCall extends Call {
   private static Code distAddNeg(Atom u, Atom y, Tail b) {
     if (b != null) {
       Atom[] bp;
-      IntConst n;
+      Word n;
       if ((bp = b.isPrim(Prim.neg)) != null) {
         return distAddNegNeg(u, bp[0]);
       }
-      if ((bp = b.isPrim(Prim.mul)) != null && (n = bp[1].isIntConst()) != null) {
+      if ((bp = b.isPrim(Prim.mul)) != null && (n = bp[1].isWord()) != null) {
         return distAddNegCMul(u, y, bp[0], n.getVal());
       }
     }
@@ -842,25 +833,25 @@ public class PrimCall extends Call {
   private static Code distAddAny(Atom x, Atom y, Tail b) {
     if (b != null) {
       Atom[] bp;
-      IntConst n;
+      Word n;
       if ((bp = b.isPrim(Prim.neg)) != null) {
         return distAddAnyNeg(x, bp[0]);
       }
-      if ((bp = b.isPrim(Prim.mul)) != null && (n = bp[1].isIntConst()) != null) {
+      if ((bp = b.isPrim(Prim.mul)) != null && (n = bp[1].isWord()) != null) {
         return distAddAnyCMul(x, bp[0], n.getVal());
       }
     }
     return distAddAnyAny(x, y);
   }
 
-  private static Code distAddCMul(Atom x, Atom u, int c, Atom y, Tail b) {
+  private static Code distAddCMul(Atom x, Atom u, long c, Atom y, Tail b) {
     if (b != null) {
       Atom[] bp;
-      IntConst n;
+      Word n;
       if ((bp = b.isPrim(Prim.neg)) != null) {
         return distAddCMulNeg(x, u, c, bp[0]);
       }
-      if ((bp = b.isPrim(Prim.mul)) != null && (n = bp[1].isIntConst()) != null) {
+      if ((bp = b.isPrim(Prim.mul)) != null && (n = bp[1].isWord()) != null) {
         return distCC(u, Prim.mul, c, Prim.add, bp[0], n.getVal());
       }
     }
@@ -870,11 +861,11 @@ public class PrimCall extends Call {
   private static Code distSubNeg(Atom u, Atom y, Tail b) {
     if (b != null) {
       Atom[] bp;
-      IntConst n;
+      Word n;
       if ((bp = b.isPrim(Prim.neg)) != null) {
         return distSubNegNeg(u, bp[0]);
       }
-      if ((bp = b.isPrim(Prim.mul)) != null && (n = bp[1].isIntConst()) != null) {
+      if ((bp = b.isPrim(Prim.mul)) != null && (n = bp[1].isWord()) != null) {
         return distSubNegCMul(u, y, bp[0], n.getVal());
       }
     }
@@ -884,25 +875,25 @@ public class PrimCall extends Call {
   private static Code distSubAny(Atom x, Atom y, Tail b) {
     if (b != null) {
       Atom[] bp;
-      IntConst n;
+      Word n;
       if ((bp = b.isPrim(Prim.neg)) != null) {
         return distSubAnyNeg(x, bp[0]);
       }
-      if ((bp = b.isPrim(Prim.mul)) != null && (n = bp[1].isIntConst()) != null) {
+      if ((bp = b.isPrim(Prim.mul)) != null && (n = bp[1].isWord()) != null) {
         return distSubAnyCMul(x, bp[0], n.getVal());
       }
     }
     return distSubAnyAny(x, y);
   }
 
-  private static Code distSubCMul(Atom x, Atom u, int c, Atom y, Tail b) {
+  private static Code distSubCMul(Atom x, Atom u, long c, Atom y, Tail b) {
     if (b != null) {
       Atom[] bp;
-      IntConst n;
+      Word n;
       if ((bp = b.isPrim(Prim.neg)) != null) {
         return distSubCMulNeg(x, u, c, bp[0]);
       }
-      if ((bp = b.isPrim(Prim.mul)) != null && (n = bp[1].isIntConst()) != null) {
+      if ((bp = b.isPrim(Prim.mul)) != null && (n = bp[1].isWord()) != null) {
         return distCC(u, Prim.mul, c, Prim.sub, bp[0], n.getVal());
       }
     }
@@ -910,7 +901,7 @@ public class PrimCall extends Call {
   }
 
   private static Code distCC(
-      Atom u, Prim m, int c, PrimBinOp a, Atom v, int d) { // (u `m` c) `a` (v `m` d) = ...
+      Atom u, Prim m, long c, PrimBinOp a, Atom v, long d) { // (u `m` c) `a` (v `m` d) = ...
     if (u == v) {
       MILProgram.report("rewrite: (u `m` c) `a` (u `m` d) ==> u `m` (c `a` d)");
       return done(m, u, a.op(c, d));
@@ -925,14 +916,14 @@ public class PrimCall extends Call {
 
   private static Code distRearrange(PrimBinOp p, PrimBinOp q, Atom x, Tail a, Atom y, Tail b) {
     Atom[] ap, bp;
-    IntConst c, d;
+    Word c, d;
     if (a != null
         && b != null
         && // check for an expression of the form required by distCC
         (ap = a.isPrim(q)) != null
         && (bp = b.isPrim(q)) != null
-        && (c = ap[1].isIntConst()) != null
-        && (d = bp[1].isIntConst()) != null) {
+        && (c = ap[1].isWord()) != null
+        && (d = bp[1].isWord()) != null) {
       return distCC(ap[0], q, c.getVal(), p, bp[0], d.getVal());
     }
     return null;
@@ -949,7 +940,7 @@ public class PrimCall extends Call {
     return done(Prim.sub, v, u);
   }
 
-  private static Code distAddCMulNeg(Atom x, Atom u, int c, Atom v) { // x@(u * c) + (-v) = ...
+  private static Code distAddCMulNeg(Atom x, Atom u, long c, Atom v) { // x@(u * c) + (-v) = ...
     if (u == v) {
       MILProgram.report("rewrite: (u * c) + (-u) ==> u * (c - 1)");
       return done(Prim.mul, u, c - 1);
@@ -957,7 +948,7 @@ public class PrimCall extends Call {
     return distAddAnyNeg(x, v);
   }
 
-  private static Code distAddNegCMul(Atom u, Atom y, Atom v, int d) { // (-u) + y@(v * d) = ...
+  private static Code distAddNegCMul(Atom u, Atom y, Atom v, long d) { // (-u) + y@(v * d) = ...
     if (u == v) {
       MILProgram.report("rewrite: (-u) + (u * d)  ==>  u * (d - 1)");
       return done(Prim.mul, u, d - 1);
@@ -965,7 +956,7 @@ public class PrimCall extends Call {
     return distAddNegAny(u, y);
   }
 
-  private static Code distSubCMulNeg(Atom x, Atom u, int c, Atom v) { // x@(u * c) - (-v) = ...
+  private static Code distSubCMulNeg(Atom x, Atom u, long c, Atom v) { // x@(u * c) - (-v) = ...
     if (u == v) {
       MILProgram.report("rewrite: (u * c) - (-u) ==> u * (c + 1)");
       return done(Prim.mul, u, c + 1);
@@ -973,7 +964,7 @@ public class PrimCall extends Call {
     return distAddAnyNeg(x, v);
   }
 
-  private static Code distSubNegCMul(Atom u, Atom y, Atom v, int d) { // (-u) - y@(v * d) = ...
+  private static Code distSubNegCMul(Atom u, Atom y, Atom v, long d) { // (-u) - y@(v * d) = ...
     if (u == v) {
       MILProgram.report("rewrite: (-u) - (u * d)  ==>  u * (-(1 + d))");
       return done(Prim.mul, u, -(1 + d));
@@ -981,7 +972,7 @@ public class PrimCall extends Call {
     return distAddNegAny(u, y);
   }
 
-  private static Code distAddCMulAny(Atom u, int c, Atom y) { // (u * c) + y = ...
+  private static Code distAddCMulAny(Atom u, long c, Atom y) { // (u * c) + y = ...
     if (u == y) {
       MILProgram.report("rewrite: (u * c) + u ==> u * (c + 1)");
       return done(Prim.mul, u, c + 1);
@@ -989,7 +980,7 @@ public class PrimCall extends Call {
     return null;
   }
 
-  private static Code distAddAnyCMul(Atom x, Atom v, int d) { // x + (v * d) = ...
+  private static Code distAddAnyCMul(Atom x, Atom v, long d) { // x + (v * d) = ...
     if (x == v) {
       MILProgram.report("rewrite: v + (v * d)  ==>  v * (1 + d)");
       return done(Prim.mul, v, 1 + d);
@@ -997,7 +988,7 @@ public class PrimCall extends Call {
     return null;
   }
 
-  private static Code distSubCMulAny(Atom u, int c, Atom y) { // (u * c) - y = ...
+  private static Code distSubCMulAny(Atom u, long c, Atom y) { // (u * c) - y = ...
     if (u == y) {
       MILProgram.report("rewrite: (u * c) - u ==> u * (c - 1)");
       return done(Prim.mul, u, c - 1);
@@ -1005,7 +996,7 @@ public class PrimCall extends Call {
     return null;
   }
 
-  private static Code distSubAnyCMul(Atom x, Atom v, int d) { // x - (v * d) = ...
+  private static Code distSubAnyCMul(Atom x, Atom v, long d) { // x - (v * d) = ...
     if (x == v) {
       MILProgram.report("rewrite: v - (v * d)  ==>  v * (1 - d)");
       return done(Prim.mul, v, 1 - d);
@@ -1054,7 +1045,7 @@ public class PrimCall extends Call {
     return commuteRearrange(Prim.mul, x, x.lookupFact(facts), y, y.lookupFact(facts));
   }
 
-  private static Code mulVarConst(Atom x, int m, Facts facts) {
+  private static Code mulVarConst(Atom x, long m, Facts facts) {
     if (m == 0) { // x * 0 == 0
       MILProgram.report("rewrite: x * 0 ==> 0");
       return done(0);
@@ -1069,7 +1060,7 @@ public class PrimCall extends Call {
     }
     if (m > 2 && (m & (m - 1)) == 0) { // x * (1 << n) == x << n
       int n = 0;
-      int m0 = m;
+      long m0 = m;
       while ((m >>= 1) > 0) {
         n++;
       } // calculate n
@@ -1080,12 +1071,12 @@ public class PrimCall extends Call {
     if (a != null) {
       Atom[] ap;
       if ((ap = a.isPrim(Prim.mul)) != null) {
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) { // (u * c) * m == u * (c * m)
           return done(Prim.mul, ap[0], b.getVal() * m);
         }
       } else if ((ap = a.isPrim(Prim.add)) != null) {
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) { // (u + n) * m == (u * m) + (n * m)
           Temp v = new Temp();
           return new Bind(v, Prim.mul.withArgs(ap[0], m), done(Prim.add, v, b.getVal() * m));
@@ -1109,7 +1100,7 @@ public class PrimCall extends Call {
     return nc;
   }
 
-  private static Code orVarConst(Atom x, int m, Facts facts) {
+  private static Code orVarConst(Atom x, long m, Facts facts) {
     if (m == 0) {
       MILProgram.report("rewrite: x | 0 ==> x");
       return done(x);
@@ -1122,7 +1113,7 @@ public class PrimCall extends Call {
     if (a != null) {
       Atom[] ap;
       if ((ap = a.isPrim(Prim.or)) != null) {
-        IntConst c = ap[1].isIntConst();
+        Word c = ap[1].isWord();
         if (c != null) {
           MILProgram.report("rewrite: (u | c) | m ==> u | (c | n)");
           return done(Prim.or.withArgs(ap[0], c.getVal() | m));
@@ -1132,17 +1123,17 @@ public class PrimCall extends Call {
         Temp v = new Temp();
         return new Bind(v, Prim.and.withArgs(ap[0], ~m), done(Prim.not.withArgs(v)));
       } else if ((ap = a.isPrim(Prim.and)) != null) {
-        IntConst c = ap[1].isIntConst(); // (_ & c) | m
+        Word c = ap[1].isWord(); // (_ & c) | m
         if (c != null) {
           Tail b = ap[0].lookupFact(facts); // ((b) & c) | m
           if (b != null) {
             Atom[] bp = b.isPrim(Prim.or); // ((_ | _) & c) | m
             if (bp != null) {
-              IntConst d = bp[1].isIntConst(); // ((_ | d) & c) | m
+              Word d = bp[1].isWord(); // ((_ | d) & c) | m
               if (d != null) {
                 MILProgram.report("rewrite: ((u | d) & c) | m ==> (u & c) | ((d & c) | m)");
                 Temp v = new Temp();
-                int n = (d.getVal() & c.getVal()) | m;
+                long n = (d.getVal() & c.getVal()) | m;
                 return new Bind(v, Prim.and.withArgs(bp[0], c), done(Prim.or.withArgs(v, n)));
               }
             }
@@ -1167,7 +1158,7 @@ public class PrimCall extends Call {
     return nc;
   }
 
-  private static Code andVarConst(Atom x, int m, Facts facts) {
+  private static Code andVarConst(Atom x, long m, Facts facts) {
     if (m == 0) {
       MILProgram.report("rewrite: x & 0 ==> 0");
       return done(0);
@@ -1180,7 +1171,7 @@ public class PrimCall extends Call {
     if (a != null) {
       Atom[] ap;
       if ((ap = a.isPrim(Prim.and)) != null) {
-        IntConst c = ap[1].isIntConst();
+        Word c = ap[1].isWord();
         if (c != null) {
           MILProgram.report("rewrite: (u & c) & m ==> u & (c & n)");
           return done(Prim.and.withArgs(ap[0], c.getVal() & m));
@@ -1190,7 +1181,7 @@ public class PrimCall extends Call {
         Temp v = new Temp();
         return new Bind(v, Prim.or.withArgs(ap[0], ~m), done(Prim.not.withArgs(v)));
       } else if ((ap = a.isPrim(Prim.or)) != null) {
-        IntConst c = ap[1].isIntConst(); // (_ | c) & m
+        Word c = ap[1].isWord(); // (_ | c) & m
         if (c != null) {
           MILProgram.report("rewrite: (a | c) & m ==> (a & m) | (c & m)");
           Temp v = new Temp();
@@ -1202,41 +1193,29 @@ public class PrimCall extends Call {
         // (observation: rewriting would avoid repeated triggering the logic here)
         // Q1: is this valid (intuition: (x<<c)&m = (x<<c)&((m>>c)<<c) = (x&(m>>c))<<c)
         // Q2: does this interfere with rewrites for (x & m) << c?  May need to remove those ...
-        IntConst c = ap[1].isIntConst(); // (_ << c) & m
+        Word c = ap[1].isWord(); // (_ << c) & m
         if (c != null) {
-          int w = c.getVal();
-          if (w > 0 && w < Type.WORDSIZE) {
+          long w = c.getVal();
+          if (w > 0 && w < Word.size()) {
             // left shifting by w bits performs an effective mask by em on the result:
-            int em = ~((1 << w) - 1);
+            long em = ~((1L << w) - 1);
             if ((m & em) == em) { // if specified mask doesn't do more than effective mask ...
               MILProgram.report(
-                  "rewrite: (x << "
-                      + w
-                      + ") & 0x"
-                      + Integer.toHexString(m)
-                      + " ==> (x << "
-                      + w
-                      + ")");
+                  "rewrite: (x << " + w + ") & 0x" + Long.toHexString(m) + " ==> (x << " + w + ")");
               return done(x);
             }
           }
         }
       } else if ((ap = a.isPrim(Prim.lshr)) != null) {
-        IntConst c = ap[1].isIntConst(); // (_ >> c) & m
+        Word c = ap[1].isWord(); // (_ >> c) & m
         if (c != null) {
-          int w = c.getVal();
-          if (w > 0 && w < Type.WORDSIZE) {
+          long w = c.getVal();
+          if (w > 0 && w < Word.size()) {
             // right shifting by w bits performs an effective mask by em on the result:
-            int em = (1 << (Type.WORDSIZE - w)) - 1;
+            long em = (1L << (Word.size() - w)) - 1;
             if ((m & em) == em) { // if specified mask doesn't do more than effective mask ...
               MILProgram.report(
-                  "rewrite: (x >> "
-                      + w
-                      + ") & 0x"
-                      + Integer.toHexString(m)
-                      + " ==> (x >> "
-                      + w
-                      + ")");
+                  "rewrite: (x >> " + w + ") & 0x" + Long.toHexString(m) + " ==> (x >> " + w + ")");
               return done(x);
             }
           }
@@ -1248,15 +1227,15 @@ public class PrimCall extends Call {
         if (b != null) {
           Atom[] bp = b.isPrim(Prim.and);
           if (bp != null) { // ((u & v) + y) & m
-            IntConst c = bp[1].isIntConst();
+            Word c = bp[1].isWord();
             if (c != null && modarith(c.getVal(), m)) { // ((u & m) + y) & m
               MILProgram.report(
                   "rewrite: ((x & 0x"
-                      + Integer.toHexString(c.getVal())
+                      + Long.toHexString(c.getVal())
                       + ") + y) & 0x"
-                      + Integer.toHexString(m)
+                      + Long.toHexString(m)
                       + " ==> (x + y) & 0x"
-                      + Integer.toHexString(m));
+                      + Long.toHexString(m));
               Temp v = new Temp();
               return new Bind(v, Prim.add.withArgs(bp[0], ap[1]), done(Prim.and.withArgs(v, m)));
             }
@@ -1268,17 +1247,17 @@ public class PrimCall extends Call {
   }
 
   /** Return true if ((x & m1) + y) & m2 == (x + y) & m2. */
-  private static boolean modarith(int m1, int m2) {
+  private static boolean modarith(long m1, long m2) {
     // if m is a run of bits, then  m | ~(m-1)  has  the same run of bits
     // with all more significant bits set to 1
     return bitrun(m1) && bitrun(m2) && ((m1 & (m2 | ~(m2 - 1))) == m1);
   }
 
   /** Return true if value m is a single run of 1 bits (no zero bits between 1s). */
-  private static boolean bitrun(int m) {
+  private static boolean bitrun(long m) {
     // If m is a run of bits, then m | (m-1) will be a run of bits with the
     // same most significant bit and all lower bits set to 1.
-    int v = (m | (m - 1));
+    long v = (m | (m - 1));
     // In which case, that value plus one will be a power of two:
     return (v & (v + 1)) == 0;
   }
@@ -1293,7 +1272,7 @@ public class PrimCall extends Call {
     return commuteRearrange(Prim.xor, x, x.lookupFact(facts), y, y.lookupFact(facts));
   }
 
-  private static Code xorVarConst(Atom x, int m, Facts facts) {
+  private static Code xorVarConst(Atom x, long m, Facts facts) {
     if (m == 0) { // x ^ 0 == x
       MILProgram.report("rewrite: x ^ 0 ==> x");
       return done(x);
@@ -1322,7 +1301,7 @@ public class PrimCall extends Call {
     return distSubAnyAny(x, y);
   }
 
-  private static Code subVarConst(Atom x, int m, Facts facts) {
+  private static Code subVarConst(Atom x, long m, Facts facts) {
     if (m == 0) { // x - 0 == x
       MILProgram.report("rewrite: x - 0 ==> x");
       return done(x);
@@ -1331,18 +1310,18 @@ public class PrimCall extends Call {
     if (a != null) {
       Atom[] ap;
       if ((ap = a.isPrim(Prim.add)) != null) {
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) {
           MILProgram.report("rewrite: (x + n) - m == x + (n - m)");
           return done(Prim.add, ap[0], b.getVal() - m);
         }
       } else if ((ap = a.isPrim(Prim.sub)) != null) {
-        IntConst c;
-        if ((c = ap[1].isIntConst()) != null) {
+        Word c;
+        if ((c = ap[1].isWord()) != null) {
           MILProgram.report("rewrite: (x - n) - m == x - (n + m)");
           return done(Prim.sub, ap[0], c.getVal() + m);
         }
-        if ((c = ap[0].isIntConst()) != null) {
+        if ((c = ap[0].isWord()) != null) {
           MILProgram.report("rewrite: (n - x) - m == (n - m) - x");
           return done(Prim.sub, c.getVal() - m, ap[1]);
         }
@@ -1366,7 +1345,7 @@ public class PrimCall extends Call {
     return done(Prim.add, x, (-m)); // x - n == x + (-n)
   }
 
-  private static Code subConstVar(int n, Atom y, Facts facts) {
+  private static Code subConstVar(long n, Atom y, Facts facts) {
     if (n == 0) { // 0 - y == -y
       MILProgram.report("rewrite: 0 - y ==> -y");
       return done(Prim.neg, y);
@@ -1375,18 +1354,18 @@ public class PrimCall extends Call {
     if (b != null) {
       Atom[] bp;
       if ((bp = b.isPrim(Prim.add)) != null) {
-        IntConst c = bp[1].isIntConst();
+        Word c = bp[1].isWord();
         if (c != null) {
           MILProgram.report("rewrite: n - (x + m) == (n - m) - x");
           return done(Prim.sub, n - c.getVal(), bp[0]);
         }
       } else if ((bp = b.isPrim(Prim.sub)) != null) {
-        IntConst c;
-        if ((c = bp[1].isIntConst()) != null) {
+        Word c;
+        if ((c = bp[1].isWord()) != null) {
           MILProgram.report("rewrite: n - (x - m) == (n + m) - x");
           return done(Prim.sub, n + c.getVal(), bp[0]);
         }
-        if ((c = bp[0].isIntConst()) != null) {
+        if ((c = bp[0].isWord()) != null) {
           MILProgram.report("rewrite: n - (m - x) == (n - m) + x");
           return done(Prim.add, n - c.getVal(), bp[0]);
         }
@@ -1402,12 +1381,14 @@ public class PrimCall extends Call {
     return null;
   }
 
-  private static Code shlVarConst(Atom x, int m, Facts facts) {
+  private static Code shlVarConst(Atom x, long m, Facts facts) {
     if (m == 0) { // x << 0 == x
       MILProgram.report("rewrite: x << 0 ==> x");
       return done(x);
-    } else if (m < 0 || m >= Type.WORDSIZE) { // x << m == x << (m % WORDSIZE)
-      int n = m % Type.WORDSIZE;
+    }
+    final int wordsize = Word.size();
+    if (m < 0 || m >= wordsize) { // x << m == x << (m % Wordsize)
+      long n = m % wordsize;
       // TODO: Is this architecture dependent?
       MILProgram.report("rewrite: x << " + m + " ==> x << " + n);
       return done(Prim.shl, x, n);
@@ -1416,11 +1397,11 @@ public class PrimCall extends Call {
     if (a != null) {
       Atom[] ap;
       if ((ap = a.isPrim(Prim.shl)) != null) {
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) {
-          int n = b.getVal();
-          if (n >= 0 && n < Type.WORDSIZE && m >= 0 && m < Type.WORDSIZE) {
-            if (n + m >= Type.WORDSIZE) {
+          long n = b.getVal();
+          if (n >= 0 && n < wordsize && m >= 0 && m < wordsize) {
+            if (n + m >= wordsize) {
               MILProgram.report("rewrite: (x << " + n + ") << " + m + " ==> 0");
               return done(0);
             } else {
@@ -1430,51 +1411,51 @@ public class PrimCall extends Call {
           }
         }
       } else if ((ap = a.isPrim(Prim.lshr)) != null) {
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) {
-          int n = b.getVal();
-          if (n == m && n > 0 && n < Type.WORDSIZE) {
-            int mask = (-1) << m;
+          long n = b.getVal();
+          if (n == m && n > 0 && n < wordsize) {
+            long mask = (-1) << m;
             MILProgram.report(
-                "rewrite: (x >>> " + m + ") << " + m + " ==>  x & 0x" + Integer.toHexString(mask));
+                "rewrite: (x >>> " + m + ") << " + m + " ==>  x & 0x" + Long.toHexString(mask));
             return done(Prim.and, ap[0], mask);
           }
         }
       } else if ((ap = a.isPrim(Prim.and)) != null) {
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) {
           // TODO: is this a good idea?  Unless n << m == 0, this makes the mask bigger ...
           MILProgram.report("rewrite: (x & n) << m  ==  (x<<m) & (n<<m)");
-          int n = b.getVal();
+          long n = b.getVal();
           Temp v = new Temp();
           return new Bind(v, Prim.shl.withArgs(ap[0], m), done(Prim.and, v, n << m));
         }
       } else if ((ap = a.isPrim(Prim.or)) != null) {
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) {
           // TODO: is this a good idea?  Unless n << m == 0, this makes the constant bigger ...
           // (But it might reduce the need for a shift if the shift on x can be combined with
           // another shift (i.e., if x = (y << p), say) ... which can happen in practice ...
           MILProgram.report("rewrite: (x | n) << m  ==  (x<<m) | (n<<m)");
-          int n = b.getVal();
+          long n = b.getVal();
           Temp v = new Temp();
           return new Bind(v, Prim.shl.withArgs(ap[0], m), done(Prim.or, v, n << m));
         }
       } else if ((ap = a.isPrim(Prim.xor)) != null) {
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) {
           MILProgram.report("rewrite: (x ^ n) << m  ==  (x<<m) ^ (n<<m)");
-          int n = b.getVal();
+          long n = b.getVal();
           Temp v = new Temp();
           return new Bind(v, Prim.shl.withArgs(ap[0], m), done(Prim.xor, v, n << m));
         }
       } else if ((ap = a.isPrim(Prim.add)) != null) {
         // TODO: we are using the same basic pattern here for &, |, ^, and +
         // ... can we generalize and perhaps include other operators too?
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) {
           MILProgram.report("rewrite: (x + n) << m  ==  (x<<m) + (n<<m)");
-          int n = b.getVal();
+          long n = b.getVal();
           Temp v = new Temp();
           return new Bind(v, Prim.shl.withArgs(ap[0], m), done(Prim.add, v, n << m));
         }
@@ -1483,7 +1464,7 @@ public class PrimCall extends Call {
     return null;
   }
 
-  private static Code shlConstVar(int n, Atom y, Facts facts) {
+  private static Code shlConstVar(long n, Atom y, Facts facts) {
     if (n == 0) { // 0 << y == 0
       MILProgram.report("rewrite: 0 << y ==> 0");
       return done(0);
@@ -1495,12 +1476,14 @@ public class PrimCall extends Call {
     return null;
   }
 
-  private static Code lshrVarConst(Atom x, int m, Facts facts) {
+  private static Code lshrVarConst(Atom x, long m, Facts facts) {
     if (m == 0) { // x >>> 0 == x
       MILProgram.report("rewrite: lshr((x, 0)) ==> x");
       return done(x);
-    } else if (m < 0 || m >= Type.WORDSIZE) { // x >>> m == x >>> (m % WORDSIZE)
-      int n = m % Type.WORDSIZE;
+    }
+    final int wordsize = Word.size();
+    if (m < 0 || m >= wordsize) { // x >>> m == x >>> (m % Wordsize)
+      long n = m % wordsize;
       // TODO: Is this architecture dependent?
       MILProgram.report("rewrite: x >>> " + m + " ==> x >>> " + n);
       return done(Prim.lshr, x, n);
@@ -1509,11 +1492,11 @@ public class PrimCall extends Call {
     if (a != null) {
       Atom[] ap;
       if ((ap = a.isPrim(Prim.lshr)) != null) {
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) {
-          int n = b.getVal();
-          if (n >= 0 && n < Type.WORDSIZE && m >= 0 && m < Type.WORDSIZE) {
-            if (n + m >= Type.WORDSIZE) {
+          long n = b.getVal();
+          if (n >= 0 && n < wordsize && m >= 0 && m < wordsize) {
+            if (n + m >= wordsize) {
               MILProgram.report("rewrite: (x >>> " + n + ") >>> " + m + " ==> 0");
               return done(0);
             } else {
@@ -1523,37 +1506,37 @@ public class PrimCall extends Call {
           }
         }
       } else if ((ap = a.isPrim(Prim.shl)) != null) {
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) {
-          int n = b.getVal();
-          if (n == m && n > 0 && n < Type.WORDSIZE) {
-            int mask = (-1) >>> m;
+          long n = b.getVal();
+          if (n == m && n > 0 && n < wordsize) {
+            long mask = (-1) >>> m;
             MILProgram.report(
-                "rewrite: (x << " + m + ") >>> " + m + " ==>  x & 0x" + Integer.toHexString(mask));
+                "rewrite: (x << " + m + ") >>> " + m + " ==>  x & 0x" + Long.toHexString(mask));
             return done(Prim.and, ap[0], mask);
           }
         }
       } else if ((ap = a.isPrim(Prim.and)) != null) {
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) {
           MILProgram.report("rewrite: (x & n) >>> m  ==  (x>>>m) & (n>>>m)");
-          int n = b.getVal();
+          long n = b.getVal();
           Temp v = new Temp();
           return new Bind(v, Prim.lshr.withArgs(ap[0], m), done(Prim.and, v, n >>> m));
         }
       } else if ((ap = a.isPrim(Prim.or)) != null) {
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) {
           MILProgram.report("rewrite: (x | n) >>> m  ==  (x>>>m) | (n>>>m)");
-          int n = b.getVal();
+          long n = b.getVal();
           Temp v = new Temp();
           return new Bind(v, Prim.lshr.withArgs(ap[0], m), done(Prim.or, v, n >>> m));
         }
       } else if ((ap = a.isPrim(Prim.xor)) != null) {
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) {
           MILProgram.report("rewrite: (x ^ n) >>> m  ==  (x>>>m) ^ (n>>>m)");
-          int n = b.getVal();
+          long n = b.getVal();
           Temp v = new Temp();
           return new Bind(v, Prim.lshr.withArgs(ap[0], m), done(Prim.xor, v, n >>> m));
         }
@@ -1562,7 +1545,7 @@ public class PrimCall extends Call {
     return null;
   }
 
-  private static Code lshrConstVar(int n, Atom y, Facts facts) {
+  private static Code lshrConstVar(long n, Atom y, Facts facts) {
     if (n == 0) { // 0 >>> y == 0
       MILProgram.report("rewrite: lshr((0, y)) ==> 0");
       return done(0);
@@ -1574,12 +1557,14 @@ public class PrimCall extends Call {
     return null;
   }
 
-  private static Code ashrVarConst(Atom x, int m, Facts facts) {
+  private static Code ashrVarConst(Atom x, long m, Facts facts) {
     if (m == 0) { // x >> 0 == x
       MILProgram.report("rewrite: ashr((x, 0)) ==> x");
       return done(x);
-    } else if (m < 0 || m >= Type.WORDSIZE) { // x >>> m == x >>> (m % WORDSIZE)
-      int n = m % Type.WORDSIZE;
+    }
+    final int wordsize = Word.size();
+    if (m < 0 || m >= wordsize) { // x >>> m == x >>> (m % Wordsize)
+      long n = m % wordsize;
       // TODO: Is this architecture dependent?
       MILProgram.report("rewrite: x >> " + m + " ==> x >> " + n);
       return done(Prim.ashr, x, n);
@@ -1588,14 +1573,14 @@ public class PrimCall extends Call {
     if (a != null) {
       Atom[] ap;
       if ((ap = a.isPrim(Prim.ashr)) != null) {
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) {
-          int n = b.getVal();
-          if (n >= 0 && n < Type.WORDSIZE && m >= 0 && m < Type.WORDSIZE) {
-            if (n + m >= Type.WORDSIZE) {
+          long n = b.getVal();
+          if (n >= 0 && n < wordsize && m >= 0 && m < wordsize) {
+            if (n + m >= wordsize) {
               MILProgram.report(
-                  "rewrite: (x >> " + n + ") >> " + m + " ==> x >> " + (Type.WORDSIZE - 1));
-              return done(Prim.ashr, ap[0], Type.WORDSIZE - 1);
+                  "rewrite: (x >> " + n + ") >> " + m + " ==> x >> " + (wordsize - 1));
+              return done(Prim.ashr, ap[0], wordsize - 1);
             } else {
               MILProgram.report("rewrite: (x >> " + n + ") >> " + m + " ==> x >> " + (n + m));
               return done(Prim.ashr, ap[0], n + m);
@@ -1605,26 +1590,26 @@ public class PrimCall extends Call {
       } else if ((ap = a.isPrim(Prim.and)) != null) {
         // It seems unlikely that arithmetic shifts will be used with bitwise operators,
         // but it shouldn't do any harm to include these optimization cases ...
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) {
           MILProgram.report("rewrite: (x & n) >> m  ==  (x>>m) & (n>>m)");
-          int n = b.getVal();
+          long n = b.getVal();
           Temp v = new Temp();
           return new Bind(v, Prim.ashr.withArgs(ap[0], m), done(Prim.and, v, n >> m));
         }
       } else if ((ap = a.isPrim(Prim.or)) != null) {
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) {
           MILProgram.report("rewrite: (x | n) >> m  ==  (x>>m) | (n>>m)");
-          int n = b.getVal();
+          long n = b.getVal();
           Temp v = new Temp();
           return new Bind(v, Prim.ashr.withArgs(ap[0], m), done(Prim.or, v, n >> m));
         }
       } else if ((ap = a.isPrim(Prim.xor)) != null) {
-        IntConst b = ap[1].isIntConst();
+        Word b = ap[1].isWord();
         if (b != null) {
           MILProgram.report("rewrite: (x ^ n) >> m  ==  (x>>m) ^ (n>>m)");
-          int n = b.getVal();
+          long n = b.getVal();
           Temp v = new Temp();
           return new Bind(v, Prim.ashr.withArgs(ap[0], m), done(Prim.xor, v, n >> m));
         }
@@ -1633,123 +1618,15 @@ public class PrimCall extends Call {
     return null;
   }
 
-  private static Code ashrConstVar(int n, Atom y, Facts facts) {
+  private static Code ashrConstVar(long n, Atom y, Facts facts) {
     if (n == 0) { // 0 >> y == 0
       MILProgram.report("rewrite: ashr((0, y)) ==> 0");
       return done(0);
-    } else if (~n == 0) { // ~0 >> y = ~0
+    } else if (n == (~0)) { // ~0 >> y = ~0
       MILProgram.report("rewrite: ashr((~0, y)) ==> ~0");
       return done(n);
     }
     return null;
-  }
-
-  /**
-   * Rewrite the components of an address, specified as the argument to a load or store operation
-   * for example, to introduce elements of more complex addressing modes (such as the use of
-   * offsets, index values, and offsets).
-   */
-  private static Atom[] rewriteAddress(Atom[] orig, Facts facts) {
-    Atom[] args = orig;
-
-    // We will assume, without attempting to validate it, that the args array has (at least five)
-    // components: S=args[0], b=args[1], o=args[2], i=args[3], and m=args[4].  Additional arguments
-    // may
-    // be provided (for example, to specify the value for use in a store operation) but they will be
-    // ignored here.
-
-    // Facts about the values of the o and i parameters (in other words, Tail values capturing the
-    // form
-    // of values in o and i, if known), are stored in fo and fi.  The values in fo and fi must be
-    // "refreshed" by further calls to lookupFact() if the values of o or i are changed by a
-    // rewrite.
-    Tail fo = args[2].lookupFact(facts);
-    Tail fi = args[3].isZero() ? null : args[3].lookupFact(facts);
-    Atom[] ps;
-
-    // 0)  ((S, _, B, i, m)) ---> ((S, B, _, i, m))
-    if (args[1].isZero() && args[2].isBase()) {
-      args = Atom.ensureFreshArgs(args);
-      args[1] = args[2];
-      args[2] = IntConst.Zero; // TODO: swap args 1 and 2?
-      MILProgram.report("rewrite: use offset as base address");
-    }
-
-    // 1)  ((S, _, B+o, i, m)) ---> ((S, B, o, i, m))
-    if (args[1].isZero() // no base set
-        && fo != null
-        && (ps = fo.isPrim(Prim.add)) != null) { // offset is a sum
-      if (ps[0].isBase()) { // left argument is a base
-        MILProgram.report("rewrite: base addressing using " + ps[0]);
-        args = Atom.ensureFreshArgs(args, orig);
-        args[1] = ps[0];
-        args[2] = ps[1];
-        fo = args[2].lookupFact(facts);
-      } else if (ps[1].isBase()) { // right argument is a base
-        MILProgram.report("rewrite: base addressing using " + ps[1]);
-        args = Atom.ensureFreshArgs(args, orig);
-        args[1] = ps[1];
-        args[2] = ps[0];
-        fo = args[2].lookupFact(facts);
-      }
-    }
-
-    // 2)  ((S, _, o, B+i, _)) ---> ((S, B, o, i, _))
-    if (args[1].isZero() // no base set
-        && args[4].isZero() // unit/no multiplier
-        && fi != null
-        && (ps = fi.isPrim(Prim.add)) != null) { // index is a sum
-      if (ps[0].isBase()) { // left argument is a base
-        MILProgram.report("rewrite: base addressing using " + ps[0]);
-        args = Atom.ensureFreshArgs(args, orig);
-        args[1] = ps[0];
-        args[3] = ps[1];
-        fi = args[3].lookupFact(facts);
-      } else if (ps[1].isBase()) { // right argument is a base
-        MILProgram.report("rewrite: base addressing using " + ps[1]);
-        args = Atom.ensureFreshArgs(args, orig);
-        args[1] = ps[1];
-        args[3] = ps[0];
-        fi = args[3].lookupFact(facts);
-      }
-    }
-
-    if (args[4].isZero()) { // no multiplier set
-      // Try to split the offset:
-      if (args[3].isZero() // no index set
-          && fo != null
-          && (ps = fo.isPrim(Prim.add)) != null) { // offset is a sum
-        // 3)  ((S, b, o+i, _, _)) ---> ((S, b, o, i, _))
-        MILProgram.report("rewrite: address is sum " + ps[0] + "+" + ps[1]);
-        args = Atom.ensureFreshArgs(args, orig);
-        args[2] = ps[0];
-        fo = args[2].lookupFact(facts);
-        args[3] = ps[1];
-        fi = args[3].lookupFact(facts);
-      }
-
-      // Look for opportunities for scaling:
-      if (fo != null
-          && (ps = fo.isPrim(Prim.mul)) != null // offset is a multiply
-          && ps[1].isMultiplier()) { // by a valid multiplier
-        // 4)  ((S, b, i*M, o, _)) ---> ((S, b, o, i, M))
-        MILProgram.report("rewrite: scaled address multiplier " + ps[1]);
-        args = Atom.ensureFreshArgs(args, orig);
-        args[2] = args[3]; // move original index into offset position
-        args[3] = ps[0]; // set new index
-        args[4] = ps[1]; // set multiplier
-      } else if (fi != null
-          && (ps = fi.isPrim(Prim.mul)) != null // index is a multiply
-          && ps[1].isMultiplier()) { // by a valid multiplier
-        // 5)  ((S, b, o, i*M, _)) ---> ((S, b, o, i, M))
-        MILProgram.report("rewrite: scaled address multiplier " + ps[1]);
-        args = Atom.ensureFreshArgs(args, orig);
-        args[3] = ps[0]; // set the index
-        args[4] = ps[1]; // set the multiplier
-      }
-    }
-
-    return args;
   }
 
   /**
@@ -1770,6 +1647,7 @@ public class PrimCall extends Call {
     return this.p == that.p && this.alphaArgs(thisvars, that, thatvars);
   }
 
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     if (type != null) {
       type = type.canonBlockType(set);
@@ -1787,15 +1665,21 @@ public class PrimCall extends Call {
     return p.repTransformPrim(set, Atom.repArgs(set, env, args));
   }
 
-  /** Generate LLVM code to execute this Tail with NO result from the right hand side of a Bind. */
-  llvm.Code toLLVMContVoid(LLVMMap lm, VarMap vm, TempSubst s, llvm.Code c) {
-    return p.toLLVMPrimVoid(lm, vm, s, args, c);
+  /**
+   * Generate LLVM code to execute this Tail with NO result from the right hand side of a Bind. Set
+   * isTail to true if the code sequence c is an immediate ret void instruction.
+   */
+  llvm.Code toLLVMBindVoid(LLVMMap lm, VarMap vm, TempSubst s, boolean isTail, llvm.Code c) {
+    return p.toLLVMPrimVoid(lm, vm, s, args, isTail, c);
   }
 
   /**
    * Generate LLVM code to execute this Tail and return a result from the right hand side of a Bind.
+   * Set isTail to true if the code sequence c will immediately return the value in the specified
+   * lhs.
    */
-  llvm.Code toLLVMContBind(LLVMMap lm, VarMap vm, TempSubst s, llvm.Local lhs, llvm.Code c) {
-    return p.toLLVMPrimCont(lm, vm, s, args, lhs, c);
+  llvm.Code toLLVMBindCont(
+      LLVMMap lm, VarMap vm, TempSubst s, boolean isTail, llvm.Local lhs, llvm.Code c) {
+    return p.toLLVMPrimCont(lm, vm, s, args, isTail, lhs, c);
   }
 }

@@ -46,9 +46,17 @@ class ClosureDefnCFG extends CFG {
     findSuccs();
   }
 
-  llvm.FuncDefn toLLVMFuncDefn(LLVMMap lm, DefnVarMap dvm, TempSubst s) {
-    llvm.Local[] formals = k.formalsClosureDefn(lm, dvm);
-    return toLLVMBody(
-        lm, dvm, s, k.retType(lm), formals, k.toLLVMClosureDefn(lm, dvm, formals[0], succs));
+  /** Calculate an array of formal parameters for the associated LLVM function definition. */
+  llvm.Local[] formals(LLVMMap lm, DefnVarMap dvm) {
+    return k.formals(lm, dvm);
+  }
+
+  /**
+   * Helper function for constructing a function definition with the fiven formal parameters and
+   * code by connecting the the associated MIL Defn for additional details.
+   */
+  llvm.FuncDefn toLLVMFuncDefn(
+      LLVMMap lm, DefnVarMap dvm, TempSubst s, llvm.Local[] formals, String[] ss, llvm.Code[] cs) {
+    return k.toLLVMFuncDefn(lm, dvm, s, formals, ss, cs, succs);
   }
 }

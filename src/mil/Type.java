@@ -44,15 +44,17 @@ public abstract class Type extends Scheme {
     return null;
   }
 
-  /** Test to see if this type scheme is polymorphic. */
-  public boolean isQuantified() {
-    return false;
+  /** Test to see if this type scheme is monomorphic. */
+  public Type isMonomorphic() {
+    return this;
   }
 
-  private static TGen[] genCache = new TGen[10];
+  private static TGen[] genCache;
 
   public static TGen gen(int n) {
-    if (n >= genCache.length) {
+    if (genCache == null) {
+      genCache = new TGen[10];
+    } else if (n >= genCache.length) {
       TGen[] newCache = new TGen[Math.max(n + 1, 2 * genCache.length)];
       for (int i = 0; i < genCache.length; i++) {
         newCache[i] = genCache[i];
@@ -273,7 +275,6 @@ public abstract class Type extends Scheme {
 
   /** Unify two types with empty type environments. (i.e., no free generic type variables.) */
   public void unify(Position pos, Type that) throws Failure {
-    // ! System.out.println("Attempting to unify " + this + " with " + that);
     unify(pos, null, that, null);
   }
 
@@ -343,12 +344,12 @@ public abstract class Type extends Scheme {
 
   /** Convenience method for constructing types of the form dom -> rng: */
   public static Type fun(Type dom, Type rng) {
-    return DataName.arrow.asType().tap(dom, rng);
+    return Tycon.arrow.asType().tap(dom, rng);
   }
 
   /** Convenience method for constructing types of the form dom ->> rng: */
   public static Type milfun(Type dom, Type rng) {
-    return MILArrow.milArrow.asType().tap(dom, rng);
+    return Tycon.milArrow.asType().tap(dom, rng);
   }
 
   /** Convenience method for constructing types of the form [dom] ->> [rng]: */
@@ -374,13 +375,26 @@ public abstract class Type extends Scheme {
     return t;
   }
 
-  public static Type procOf(Type res) {
-    return new TAp(DataName.proc.asType(), res);
+  /**
+   * Find the arity of this tuple type (i.e., the number of components) or return (-1) if it is not
+   * a tuple type. Parameter n specifies the number of arguments that have already been found; it
+   * should be 0 for the initial call.
+   */
+  int tupleArity(Type[] tenv, int n) {
+    return (-1);
   }
+
+  public static Type procOf(Type res) {
+    return new TAp(Tycon.proc.asType(), res);
+  }
+
+  public static final int MAX_BIT_WIDTH = 1000;
+
+  public static final BigInteger BIG_MAX_BIT_WIDTH = BigInteger.valueOf(MAX_BIT_WIDTH);
 
   /** Convenience method for making a type of the form Bit n for some type w. */
   public static Type bit(Type w) {
-    return new TAp(DataName.bit.asType(), w);
+    return Tycon.bit.asType().tap(w);
   }
 
   /** Convenience method for making a type of the form Bit n for some known integer value n. */
@@ -388,212 +402,28 @@ public abstract class Type extends Scheme {
     return Type.bit(new TNat(w));
   }
 
+  /** Convenience method for making a type of the form Ref a for some area type a. */
+  public static Type ref(Type areaType) {
+    return Tycon.ref.asType().tap(areaType);
+  }
+
   /** Convenience method for making a type of the form Init a for some area type a. */
   public static Type init(Type a) {
-    return new TAp(DataName.init.asType(), a);
-  }
-
-  public static final int FLAGSIZE = 1;
-
-  public static final BigInteger BigFLAGSIZE = BigInteger.valueOf(FLAGSIZE);
-
-  public static final Type TypeFLAGSIZE = new TNat(BigFLAGSIZE);
-
-  public static final int WORDSIZE = 32;
-
-  public static final BigInteger BigWORDSIZE = BigInteger.valueOf(WORDSIZE);
-
-  public static final Type TypeWORDSIZE = new TNat(BigWORDSIZE);
-
-  public static final int MAXWIDTH = 4 * WORDSIZE;
-
-  public static final BigInteger BigMAXWIDTH = BigInteger.valueOf(MAXWIDTH);
-
-  public static final BigInteger BigMINIX = BigInteger.valueOf(2);
-
-  public static final BigInteger BigMAXIX = BigInteger.ONE.shiftLeft(WORDSIZE);
-
-  /** Return the number of words that are needed to hold a value with the specified bitsize. */
-  public static int numWords(int numBits) {
-    return (numBits + WORDSIZE - 1) / WORDSIZE;
-  }
-
-  /**
-   * Determine whether this type is a valid argument for a Bit type (i.e., a TNat in the range 0 to
-   * BigMAXWIDTH inclusive).
-   */
-  BigInteger getBitArg() {
-    BigInteger n = getNat();
-    return (n != null && (n.compareTo(BigInteger.ZERO) >= 0) && (n.compareTo(BigMAXWIDTH) <= 0))
-        ? n
-        : null;
-  }
-
-  /**
-   * Determine whether this type is a valid argument for an Ix type (i.e., a TNat in the range
-   * BigMINIX to BigMAXIX inclusive).
-   */
-  BigInteger getIxArg() {
-    BigInteger n = getNat();
-    return (n != null && (n.compareTo(BigMINIX) >= 0) && (n.compareTo(BigMAXIX) <= 0)) ? n : null;
+    return Tycon.init.asType().tap(a);
   }
 
   /** Find the name of the associated bitdata type, if any. */
-  public BitdataName bitdataName() {
+  public BitdataType bitdataType() {
     return null;
   }
 
-  /**
-   * Return the natural number type that specifies the BitSize of this type (required to be of kind
-   * *) or null if this type has no BitSize (i.e., no bit-level representation). This method should
-   * only be used with a limited collection of classes (we only expect to use it with top-level,
-   * monomorphic types), but, just in case, we also provide implementations for classes that we do
-   * not expect to see in practice, and allow for the possibility of a type environment, even though
-   * we expect it will only ever be null.
-   */
-  public abstract Type bitSize(Type[] tenv);
-
-  /**
-   * Worker method for calculating the BitSize for a type of the form (this a) (i.e., this, applied
-   * to the argument a). The specified type environment, tenv, is used for both this and a.
-   */
-  Type bitSize(Type[] tenv, Type a) {
-    return null;
-  }
-
-  BigInteger ixBound(Type[] tenv) {
-    BigInteger n = simplifyNatType(tenv).getNat();
-    if (n == null) {
-      debug.Internal.error("invalid Ix bound: " + skeleton(tenv));
-    }
-    return n.subtract(BigInteger.ONE);
-  }
-
-  /**
-   * Worker method for calculating the BitSize for a type of the form (this a b) (i.e., this,
-   * applied to two arguments, a and b). The specified type environment, tenv, is used for this, a,
-   * and b.
-   */
-  Type bitSize(Type[] tenv, Type a, Type b) {
-    return null;
-  }
-
-  int arefWidth(Type[] tenv) {
-    BigInteger n = simplifyNatType(tenv).getNat();
-    if (n == null) {
-      debug.Internal.error("invalid ARef alignment: " + skeleton(tenv));
-    }
-    if (n.signum() <= 0) { // not strictly positive
-      return 0;
-    }
-    BigInteger n1 = n.subtract(BigInteger.ONE);
-    if (n.and(n1).signum() != 0) { // not a power of two
-      return 0;
-    }
-    int w = Type.WORDSIZE - n1.bitLength(); // Find width
-    return (w >= 0 && w <= Type.WORDSIZE) ? w : 0;
-  }
-
-  public Pat bitPat(Type[] tenv) {
-    return null;
-  }
-
-  Pat bitPat(Type[] tenv, Type a) {
-    return null;
-  }
-
-  int bitWidth(Type[] tenv) {
-    BigInteger n = simplifyNatType(tenv).getNat();
-    if (n == null) {
-      debug.Internal.error("Unresolved size parameter " + skeleton(tenv));
-    }
-    int w = n.intValue();
-    if (w < 0 || w > Type.MAXWIDTH) {
-      debug.Internal.error("Bit width " + w + " is out of allowed range");
-    }
-    return w;
-  }
-
-  Pat bitPat(Type[] tenv, Type a, Type b) {
-    return null;
-  }
-
-  /**
-   * Find the Bitdata Layout associated with values of this type, if there is one, or else return
-   * null. TODO: perhaps this code should be colocated with bitdataName()?
-   */
+  /** Find the Bitdata Layout associated with values of this type, or else return null. */
   public BitdataLayout bitdataLayout() {
     return null;
   }
 
-  /** Return the number of bytes that are needed to hold a value with the specified bitsize. */
-  public static int numBytes(int numBits) {
-    return (numBits + 7) / 8;
-  }
-
   /** Find the name of the associated struct type, if any. */
-  public StructName structName() {
-    return null;
-  }
-
-  /**
-   * Return the natural number type that specifies the ByteSize of this type (required to be of kind
-   * area) or null if this type has no ByteSize (i.e., no memory layout).
-   */
-  public abstract Type byteSize(Type[] tenv);
-
-  /**
-   * Worker method for calculating the ByteSize for a type of the form (this a) (i.e., this, applied
-   * to the argument a). The specified type environment, tenv, is used for both this and a.
-   */
-  Type byteSize(Type[] tenv, Type a) {
-    return null;
-  }
-
-  /**
-   * Worker method for calculating the ByteSize for a type of the form (this a b) (i.e., this,
-   * applied to two arguments, a and b). The specified type environment, tenv, is used for this, a,
-   * and b.
-   */
-  Type byteSize(Type[] tenv, Type a, Type b) {
-    return null;
-  }
-
-  /**
-   * Worker method for calculating ByteSize (Stored this), with the specified type environment tenv,
-   * short-circuiting through indirections and type variables as necessary. Implements the function:
-   * ByteSize (Stored (ARef l a)) = WordSize / 8 ByteSize (Stored (APtr l a)) = WordSize / 8
-   * ByteSize (Stored t) = 0, if BitSize t == 0 = 1, if 0 < BitSize t <= 8 = 2, if 8 < BitSize t <=
-   * 16 = 4, if 16 < BitSize t <= 32 = 8, if 32 < BitSize t <= 64
-   */
-  Type byteSizeStored(Type[] tenv) {
-    Type bytes = byteSizeStoredRef(tenv); // Check cases for ARef and APtr types first
-    if (bytes == null) {
-      Type bits = bitSize(tenv); // Otherwise check bit representation of this type
-      if (bits != null) {
-        BigInteger m = bits.simplifyNatType(null).getNat();
-        if (m != null) {
-          int n = Type.numBytes(m.intValue());
-          return (n == 0)
-              ? new TNat(0)
-              : (n == 1)
-                  ? new TNat(1)
-                  : (n == 2) ? new TNat(2) : (n <= 4) ? new TNat(4) : (n <= 8) ? new TNat(8) : null;
-        }
-      }
-    }
-    return bytes;
-  }
-
-  Type byteSizeStoredRef(Type[] tenv) {
-    return null;
-  }
-
-  Type byteSizeStoredRef(Type[] tenv, Type a) {
-    return null;
-  }
-
-  Type byteSizeStoredRef(Type[] tenv, Type a, Type b) {
+  public StructType structType() {
     return null;
   }
 
@@ -627,7 +457,7 @@ public abstract class Type extends Scheme {
 
   /**
    * Find the canonical version of this type skeleton for the given TypeSet using the specified
-   * environment to intepret TGens values.
+   * environment to intepret TGen values.
    */
   Type canonType(Type[] env, TypeSet set) {
     return canonType(env, set, 0);
@@ -642,7 +472,7 @@ public abstract class Type extends Scheme {
   }
 
   /**
-   * Find a canonical version of this type in the given set, using the specified environment to
+   * Find the canonical version of this type in the given set, using the specified environment to
    * interpret TGens, and assuming that we have already pushed a certain number of args for this
    * type on the stack.
    */
@@ -683,7 +513,23 @@ public abstract class Type extends Scheme {
     return this;
   }
 
-  DataName isDataName() {
+  boolean instMatches(Type right) {
+    return false;
+  }
+
+  boolean instMatchesTycon(Tycon left) {
+    return false;
+  }
+
+  boolean instMatchesTAp(TAp left) {
+    return false;
+  }
+
+  Type canonArgs(Type[] tenv, TypeSet set, int args) {
+    return set.rebuild(this, args);
+  }
+
+  DataType dataType() {
     return null;
   }
 
@@ -702,7 +548,7 @@ public abstract class Type extends Scheme {
     // Code to update cache[arg] = ... will be appended here.
 
     Type[] ws = new Type[n];
-    Type w = DataName.word.asType();
+    Type w = Tycon.word.asType();
     for (int i = 0; i < n; i++) {
       ws[i] = w;
     }
@@ -711,10 +557,16 @@ public abstract class Type extends Scheme {
 
   /**
    * Return the representation vector for a bitdata value of width w using an appropriate sequence
-   * of Word values or, for values of width 1, a single MIL Flag value.
+   * of Word values (so long as w <= MAX_BIT_WIDTH, to avoid creating very large representation
+   * vectors for pathological test cases). For values of width 1, the representation vector contains
+   * a single MIL Flag value, while for values of width 0, it contains only Unit.
    */
   public static Type[] repBits(int w) {
-    return (w == 0) ? DataName.unitRep : (w == 1) ? DataName.flagRep : Type.words(Type.numWords(w));
+    return (w == 0)
+        ? Tycon.unitRep
+        : (w == 1)
+            ? Tycon.flagRep
+            : (w <= Type.MAX_BIT_WIDTH) ? Type.words(Word.numWords(w)) : null;
   }
 
   /** Return the representation vector for values of this type. */
@@ -723,11 +575,12 @@ public abstract class Type extends Scheme {
   }
 
   /**
-   * Determine whether this type constructor is of the form Bit, Ix, or ARef l returning an
-   * appropriate representation vector, or else null if none of these patterns applies. TODO: are
-   * there other types we should be including here?
+   * Return the representation vector for types formed by applying this type to the argument a. This
+   * allows us to provide special representations for types of the form Bit a, Ix a, Ref a, etc. If
+   * none of these apply, we just return null. TODO: are there other types we should be including
+   * here?
    */
-  Type[] bitdataTyconRep(Type a) {
+  Type[] repCalc(Type a) {
     return null;
   }
 
@@ -747,12 +600,100 @@ public abstract class Type extends Scheme {
     return null;
   }
 
+  BigInteger validNat() throws GeneratorException {
+    throw new GeneratorException(this + " is not a natural number");
+  }
+
   /**
-   * Determine whether this type constructor is an ARef, returning either an appropriate
-   * representation vector, or else null.
+   * Check that the specified type is a natural number that can be used as the argument for a Bit
+   * type.
    */
-  Type[] bitdataTyconRep2(Type a, Type b) {
-    return null;
+  int validWidth() throws GeneratorException {
+    BigInteger n = validNat();
+    validBelow(n, BIG_MAX_BIT_WIDTH);
+    return n.intValue();
+  }
+
+  int validWidth(int lo) throws GeneratorException {
+    int n = validWidth();
+    validNotBelow(n, lo);
+    return n;
+  }
+
+  int validMemBitSize() throws GeneratorException {
+    int w = memBitSize(null);
+    if (w < 0) {
+      throw new GeneratorException("No known BitSize for Stored value of type " + this);
+    }
+    return w;
+  }
+
+  /**
+   * Determine whether the given number is small enough to fit in a signed long; we assume already
+   * that it is non negative.
+   */
+  static void validSigned(BigInteger n) throws GeneratorException {
+    if (n.compareTo(Word.maxSigned()) > 0) {
+      throw new GeneratorException(
+          "parameter value " + n + " is too large; must be at most " + Word.maxSigned());
+    }
+  }
+
+  /**
+   * Check that the specified type is a natural number that can be used as the argument for an Ix
+   * type. Specifically, we require that this type must be in the range [1..maxSigned], which
+   * ensures that all Ix n values are nonempty (because n>0) and can be stored within a single Word
+   * (because n<=maxSigned). If this test pasts, then it is safe to use longValue() on the result
+   * without loss of information.
+   */
+  BigInteger validIndex() throws GeneratorException {
+    BigInteger n = validNat();
+    if (n.signum() <= 0) {
+      throw new GeneratorException("parameter value " + n + " is too small; must be at least 1");
+    }
+    validSigned(n);
+    return n;
+  }
+
+  static void validBelow(BigInteger v, BigInteger tooBig) throws GeneratorException {
+    if (v.compareTo(tooBig) >= 0) {
+      throw new GeneratorException("parameter " + v + " is too large; must be less than " + tooBig);
+    }
+  }
+
+  static void validNotBelow(long n, long lo) throws GeneratorException {
+    if (n < lo) {
+      throw new GeneratorException("parameter " + n + " is too low; must be at least " + lo);
+    }
+  }
+
+  /**
+   * Find the number of words (parameter slots) that are needed to represent a value of this type.
+   * If there is a change of representation, then use the length of the associated representation
+   * vector; otherwise, one parameter maps to one word.
+   */
+  int repLen() {
+    Type[] r = repCalc();
+    return (r == null) ? 1 : r.length;
+  }
+
+  long validArrayArea() throws GeneratorException {
+    Type bs = byteSize(null);
+    if (bs == null) {
+      throw new GeneratorException("Cannot determine ByteSize for " + this);
+    }
+    BigInteger s = bs.validNat();
+    validSigned(s);
+    long align = alignment(null);
+    if (align == 0) {
+      throw new GeneratorException("Cannot determine alignment for " + this);
+    }
+    long size = s.longValue();
+    if ((size % align) != 0) {
+      throw new GeneratorException(
+          "Element size " + size + " is not divisible by alignment " + align);
+    }
+    return size;
   }
 
   /**
@@ -771,7 +712,7 @@ public abstract class Type extends Scheme {
       }
     }
     BlockType bt = new BlockType(Type.tuple(ds), Type.tuple(rs));
-    return new PrimCall(new Prim(id, ds.length, rs.length, Prim.IMPURE, bt));
+    return new PrimCall(new Prim(id, Prim.IMPURE, bt));
   }
 
   /**
@@ -811,7 +752,7 @@ public abstract class Type extends Scheme {
     return null;
   }
 
-  /** Test to determine if this type is the MILArrow, ->>, without any arguments. */
+  /** Test to determine if this type is the MIL function arrow, ->>, without any arguments. */
   boolean isMILArrow() {
     return false;
   }
@@ -865,8 +806,248 @@ public abstract class Type extends Scheme {
     return true;
   }
 
-  boolean useBitdataLo(Type t, Type s) {
+  /**
+   * Determine whether this type is a natural number that falls within the specified range,
+   * inclusive of bounds.
+   */
+  BigInteger inRange(BigInteger lo, BigInteger hi) {
+    return null;
+  }
+
+  /**
+   * Return the natural number type that specifies the BitSize of this type (required to be of kind
+   * *) or null if this type has no BitSize (i.e., no bit-level representation). This method should
+   * only be used with a limited collection of classes (we only expect to use it with top-level,
+   * monomorphic types), but, just in case, we also provide implementations for classes that we do
+   * not expect to see in practice, and allow for the possibility of a type environment, even though
+   * we expect it will only ever be null.
+   */
+  public abstract Type bitSize(Type[] tenv);
+
+  /**
+   * Worker method for calculating the BitSize for a type of the form (this a) (i.e., this, applied
+   * to the argument a). The specified type environment, tenv, is used for both this and a.
+   */
+  Type bitSize(Type[] tenv, Type a) {
+    return null;
+  }
+
+  BigInteger ixBound(Type[] tenv) {
+    BigInteger n = simplifyNatType(tenv).getNat();
+    if (n == null) {
+      debug.Internal.error("invalid Ix bound: " + skeleton(tenv));
+    }
+    return n.subtract(BigInteger.ONE);
+  }
+
+  /**
+   * Calculate the width in bits that is needed to represent a reference or pointer to a value of
+   * this type using BitSize (Ref a) = WordSize - p if Align a = 2^p.
+   */
+  int refWidth(Type[] tenv) {
+    long alignment = this.alignment(tenv);
+    int width = Word.size();
+    if (alignment > 0 && ((alignment & (alignment - 1)) == 0)) { // power of two alignment
+      while ((alignment >>= 1) != 0) {
+        width--;
+      }
+    }
+    return width;
+  }
+
+  public Pat bitPat(Type[] tenv) {
+    return null;
+  }
+
+  Pat bitPat(Type[] tenv, Type a) {
+    return null;
+  }
+
+  int bitWidth(Type[] tenv) {
+    BigInteger nat = simplifyNatType(tenv).getNat();
+    if (nat == null) {
+      debug.Internal.error("Unresolved size parameter " + skeleton(tenv));
+    } else if (nat.signum() < 0 || nat.compareTo(Type.BIG_MAX_BIT_WIDTH) > 0) {
+      return (-1);
+    }
+    return nat.intValue();
+  }
+
+  /**
+   * Return the number of bytes that are needed to hold an in-memory representation of a value with
+   * the specified bitsize. A negative result indicates that there is no in-memory representation
+   * for a value of this width (at least, as a single value).
+   */
+  public static int numBytes(int numBits) {
+    if (numBits < 0) { // negative input ==> no in-memory representation
+      return numBits;
+    }
+    int n = (numBits + 7) / 8;
+    return (n == 0)
+        ? 0 // if BitSize t == 0
+        : (n == 1)
+            ? 1 // if 0  < BitSize t <= 8
+            : (n == 2)
+                ? 2 // if 8  < BitSize t <= 16
+                : (n <= 4)
+                    ? 4 // if 16 < BitSize t <= 32
+                    : (n <= 8)
+                        ? 8 // if 32 < BitSize t <= 64
+                        : (-1); // too big!
+  }
+
+  /**
+   * Return the natural number type that specifies the ByteSize of this type (required to be of kind
+   * area) or null if this type has no ByteSize (i.e., no memory layout).
+   */
+  public abstract Type byteSize(Type[] tenv);
+
+  /**
+   * Worker method for calculating the ByteSize for a type of the form (this a) (i.e., this, applied
+   * to the argument a). The specified type environment, tenv, is used for both this and a.
+   */
+  Type byteSize(Type[] tenv, Type a) {
+    return null;
+  }
+
+  /**
+   * Worker method for calculating the ByteSize for a type of the form (this a b) (i.e., this,
+   * applied to two arguments, a and b). The specified type environment, tenv, is used for this, a,
+   * and b.
+   */
+  Type byteSize(Type[] tenv, Type a, Type b) {
+    return null;
+  }
+
+  /**
+   * Worker method for calculating ByteSize (Stored this), with the specified type environment tenv.
+   */
+  Type byteSizeStored(Type[] tenv) {
+    int n = Type.numBytes(memBitSize(tenv));
+    return (n >= 0) ? new TNat(n) : null;
+  }
+
+  /**
+   * Calculate the number of bits required for an in-memory representation of this type. This is
+   * essentially the same as the bitSize of the type, except for the special case of reference
+   * types, which use a full word. A negative result indicates that there is no in-memory
+   * representation for values of this type.
+   */
+  int memBitSize(Type[] tenv) {
+    if (referenceType(tenv)) { // Check cases for Ref and Ptr types first
+      return Word.size();
+    }
+    Type bits = bitSize(tenv); // Otherwise check bit representation of this type
+    if (bits != null) {
+      BigInteger m = bits.simplifyNatType(null).getNat();
+      if (m != null) {
+        return m.intValue();
+      }
+    }
+    return (-1);
+  }
+
+  /** Determine if this is a type of the form (Ref a) or (Ptr a) for some area type a. */
+  boolean referenceType(Type[] tenv) {
+    return false;
+  }
+
+  /**
+   * Determine if this type, applied to the given a, is a reference type of the form (Ref a) or (Ptr
+   * a). TODO: The a parameter is not currently inspected; we could attempt to check that it is a
+   * valid area type (but kind checking should have done that already) or else look to eliminate it.
+   */
+  boolean referenceType(Type[] tenv, Type a) {
+    return false;
+  }
+
+  /** Return the alignment of this type (or zero if there is no alignment). */
+  public abstract long alignment(Type[] tenv);
+
+  /**
+   * Worker method for calculating the alignment for a type of the form (this a) (i.e., this,
+   * applied to the argument a). The specified type environment, tenv, is used for both this and a.
+   */
+  long alignment(Type[] tenv, Type a) {
+    return 0;
+  }
+
+  /**
+   * Worker method for calculating the alignment for a type of the form (this a b) (i.e., this,
+   * applied to two arguments, a and b). The specified type environment, tenv, is used for this, a,
+   * and b.
+   */
+  long alignment(Type[] tenv, Type a, Type b) {
+    return 0;
+  }
+
+  /**
+   * Worker method for calculating Align (Stored this), with the type environment tenv. Returns an
+   * alignment of 1 if this type has no stored representation, or has a zero width stored
+   * representation.
+   */
+  long alignmentStored(Type[] tenv) {
+    return Math.max(1, Type.numBytes(memBitSize(tenv)));
+  }
+
+  /** Check that an area of this type has a known ByteSize. */
+  public Type calcAreaSize(Position pos) throws Failure {
+    Type size = byteSize(null);
+    if (size == null || size.getNat() == null) {
+      throw new Failure(pos, "Cannot determine ByteSize for type \"" + this + "\"");
+    }
+    return size;
+  }
+
+  /**
+   * Check that an area of this type has a valid alignment, consistent with declared value, if
+   * given.
+   */
+  public long calcAreaAlignment(Position pos, MILEnv milenv, TypeExp alignExp) throws Failure {
+    long alignment = this.alignment(null);
+    if (alignment < 1) {
+      throw new Failure(pos, "Unable to determine alignment for " + this);
+    } else if (alignExp != null) {
+      alignExp.scopeType(null, milenv.getTyconEnv(), 0);
+      alignExp.checkKind(KAtom.NAT);
+      return alignExp.getAlignment(alignment);
+    }
+    return alignment;
+  }
+
+  /**
+   * Determine whether this item is for a non-Unit, corresponding to a value that requires a
+   * run-time representation in the generated LLVM.
+   */
+  boolean nonUnit() {
+    return nonUnit(null);
+  }
+
+  boolean nonUnit(Type[] tenv) {
     return true;
+  }
+
+  /**
+   * Filter all unit values from this array producing either a new (shorter) array, or just
+   * returning the original array if all of the elements are non-units.
+   */
+  static Type[] nonUnits(Type[] xs) {
+    int nonUnits = 0; // count number of non unit components
+    for (int i = 0; i < xs.length; i++) {
+      if (xs[i].nonUnit()) {
+        nonUnits++;
+      }
+    }
+    if (nonUnits >= xs.length) { // all components are non unit
+      return xs; // so there is no change
+    }
+    Type[] nxs = new Type[nonUnits]; // make array with just the non units
+    for (int i = 0, j = 0; j < nonUnits; i++) {
+      if (xs[i].nonUnit()) {
+        nxs[j++] = xs[i];
+      }
+    }
+    return nxs;
   }
 
   /**
@@ -874,7 +1055,7 @@ public abstract class Type extends Scheme {
    * (canononical) type is passed in for reference as we unwind it on the underlying TypeSet stack.
    */
   llvm.Type toLLVMCalc(Type c, LLVMMap lm, int args) {
-    //  debug.Internal.error("toLLVM not defined for type " + this);
+    debug.Internal.error("toLLVM not defined for type " + this);
     return llvm.Type.vd; // not reached
   }
 
@@ -888,14 +1069,17 @@ public abstract class Type extends Scheme {
     return this;
   }
 
-  /** Calculate an array of llvm Types corresponding to the components of a given MIL Tuple type. */
-  llvm.Type[] tupleToArray(LLVMMap lm, int args) {
+  /**
+   * Calculate an array of llvm Types corresponding to the components of a given MIL Tuple type.
+   * Unit types are filtered out in the process, so the resulting array may not actually have as
+   * many components as the input tuple type.
+   */
+  llvm.Type[] tupleToArray(LLVMMap lm, int args, int nonUnits) {
     if (this != TupleCon.tuple(args).asType()) {
-      // TODO: uncomment the following to trigger stricter error checking
-      //    debug.Internal.error("tupleToArray not defined for " + this);
-      //    return null; // not reached
+      debug.Internal.error("tupleToArray not defined for " + this);
+      return null; // not reached
     }
-    return new llvm.Type[args];
+    return new llvm.Type[nonUnits];
   }
 
   /**
@@ -903,12 +1087,12 @@ public abstract class Type extends Scheme {
    * type as the first argument and adding an extra argument for each component in this type, which
    * must be a tuple.
    */
-  llvm.Type[] closureArgs(LLVMMap lm, llvm.Type ptr, int args) {
+  llvm.Type[] closureArgs(LLVMMap lm, llvm.Type ptr, int args, int nonUnits) {
     if (this != TupleCon.tuple(args).asType()) {
-      //    debug.Internal.error("closureArgs not defined for " + this);
-      //    return null; // not reached
+      debug.Internal.error("closureArgs not defined for " + this);
+      return null; // not reached
     }
-    llvm.Type[] cargs = new llvm.Type[1 + args];
+    llvm.Type[] cargs = new llvm.Type[1 + nonUnits];
     cargs[0] = ptr;
     return cargs;
   }

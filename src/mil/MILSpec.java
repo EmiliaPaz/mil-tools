@@ -20,25 +20,22 @@ package mil;
 
 import compiler.*;
 import compiler.Failure;
+import compiler.Handler;
 import core.*;
 import java.io.PrintWriter;
 import java.util.HashMap;
 
 public class MILSpec extends TypeSet {
 
-  /**
-   * A mapping from (canonical) types for specific, monomorphic instances of parameterized algebraic
-   * datatypes in the original program to the corresponding specialized (non-parameterized)
-   * datatypes.
-   */
-  private HashMap<Type, DataName> specDataNames = new HashMap();
+  /** A mapping from (canonical) versions of DataType values to TypeSpecs mappings. */
+  private HashMap<DataType, TypeSpecs> dataTypeSpecs = new HashMap();
 
-  void put(Type inst, DataName dn) {
-    specDataNames.put(inst, dn);
+  void putTypeSpecs(DataType dt, TypeSpecs ts) {
+    dataTypeSpecs.put(dt, ts);
   }
 
-  DataName get(Type inst) {
-    return specDataNames.get(inst);
+  TypeSpecs getTypeSpecs(DataType dt) {
+    return dataTypeSpecs.get(dt);
   }
 
   public void dump(PrintWriter out) {
@@ -63,15 +60,10 @@ public class MILSpec extends TypeSet {
     }
 
     out.println("Specialized Datatypes: ------------------");
-    for (Type t : specDataNames.keySet()) {
-      DataName dn = specDataNames.get(t);
-      if (t != dn.asType()) {
-        out.println("  " + t + "  ~~>  " + dn.asType());
-        Cfun[] cfuns = dn.getCfuns();
-        for (int i = 0; i < cfuns.length; i++) {
-          out.println("      " + cfuns[i].getId() + " :: " + cfuns[i].getAllocType());
-        }
-        out.println();
+    for (DataType dt : dataTypeSpecs.keySet()) {
+      for (TypeSpecs ts = getTypeSpecs(dt); ts != null; ts = ts.next) {
+        out.println("-- " + ts.inst + "  ~~>  " + ts.dt.asType());
+        ts.dt.dumpTypeDefinition(out);
       }
     }
     super.dump(out);
@@ -83,7 +75,8 @@ public class MILSpec extends TypeSet {
    * unparameterized types.
    */
   protected Type canon(Tycon h, int args) {
-    return h.specializeTycon(this, super.canon(h, args));
+    Type t = h.specInst(this, args);
+    return (t == null) ? super.canon(h, args) : t;
   }
 
   /**
@@ -200,6 +193,31 @@ public class MILSpec extends TypeSet {
     return newDefn;
   }
 
+  /** Request a version of a definition that is specialized to a given monomorphic type. */
+  public MemArea specializedMemArea(MemArea d, Scheme inst) {
+    debug.Log.println("Requesting specialization of " + d + " :: " + inst);
+    // Get the list of previous specializations:
+    Defns specs = specialized.get(d);
+    int num = 0; // count number of existing specializations
+
+    // Search previous specializations for a matching type:
+    for (Defns ds = specs; ds != null; ds = ds.next) {
+      MemArea prev = ds.head.isMemAreaOfType(inst);
+      if (prev != null) {
+        return prev;
+      }
+      num++;
+    }
+
+    // Create a new item, insert in specialized table, and add a request to complete the definition
+    // later:
+    MemArea newDefn = new MemArea(d, num);
+    newDefn.setDeclared(inst);
+    specialized.put(d, new Defns(newDefn, specs));
+    requested = new SpecReqs(new SpecMemArea(d, newDefn), requested);
+    return newDefn;
+  }
+
   private HashMap<Prim, Prims> primSpecMap = new HashMap();
 
   Prims getPrims(Prim p) {
@@ -217,9 +235,25 @@ public class MILSpec extends TypeSet {
   }
 
   /** Request a specialized version of a given definition as an entry point to the new program. */
-  void addEntry(Defn d) throws Failure {
-    // !  System.out.println("Specializing entry for " + d);
-    prog.addEntry(d.specializeEntry(this));
+  void addEntry(Handler handler, Defn d) {
+    try {
+      prog.addEntry(d.specializeEntry(this));
+    } catch (Failure f) {
+      handler.report(f);
+    }
+  }
+
+  /**
+   * Request a specialized version of the given definition as the main definition for this program.
+   */
+  void addMain(Handler handler, Defn main) {
+    if (main != null) {
+      try {
+        prog.setMain(main.specializeEntry(this));
+      } catch (Failure f) {
+        handler.report(f);
+      }
+    }
   }
 
   /**
@@ -234,25 +268,5 @@ public class MILSpec extends TypeSet {
     }
     prog.shake(); // Calculate SCCs for the resulting specialized program
     prog.canonDeclared(this); // Update declared types to use the specialized datatypes
-  }
-
-  /**
-   * Build a list of all the zero arity (no parameters), nonrecursive, datatypes with one or more
-   * constructors that do not already have an associated bitSize, and might therefore be candidates
-   * for replacing with bitdata types.
-   */
-  public DataNames bitdataCandidates() {
-    DataNames cands = null;
-    for (Type t : specDataNames.keySet()) {
-      DataName dn = specDataNames.get(t);
-      if (t == dn.asType() && dn.getArity() == 0 && !dn.isRecursive() && dn.bitSize() == null) {
-        Cfun[] cfuns = dn.getCfuns();
-        if (cfuns != null && cfuns.length > 0) {
-          debug.Log.println("DataName " + dn + " is a candidate for bitdata representation");
-          cands = new DataNames(dn, cands);
-        }
-      }
-    }
-    return cands;
   }
 }

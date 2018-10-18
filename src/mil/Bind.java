@@ -61,15 +61,20 @@ public class Bind extends Code {
   }
 
   /** Display a printable representation of this MIL construct on the specified PrintWriter. */
-  public void dump(PrintWriter out) {
+  public void dump(PrintWriter out, Temps ts) {
+    Temps ts1 = Defn.renameTemps ? Temps.push(vs, ts) : ts;
     indent(out);
-    Atom.displayTuple(out, vs);
+    Atom.displayTuple(out, vs, ts1);
     out.print(" <- ");
-    t.displayln(out);
-    c.dump(out);
+    t.displayln(out, ts);
+    c.dump(out, ts1);
   }
 
-  /** Force the application of a TempSubst to this Code sequence. */
+  /**
+   * Force the application of a TempSubst to this Code sequence, forcing construction of a fresh
+   * copy of the input code structure, including the introduction of new temporaries in place of any
+   * variables introduced by Binds.
+   */
   public Code forceApply(TempSubst s) { // vs <- t; c
     Tail t1 = t.forceApply(s);
     Temp[] ws = new Temp[vs.length];
@@ -134,6 +139,12 @@ public class Bind extends Code {
     return t.doesntReturn() || c.doesntReturn();
   }
 
+  boolean detectLoops(
+      Block src, Blocks visited) { // look for src[x] = (vs <- b[x]; ...), possibly with some
+    // initial prefix of pure bindings xs1 <- pt1; ...; xsn <- ptn
+    return t.detectLoops(src, visited) || (t.hasNoEffect() && c.detectLoops(src, visited));
+  }
+
   /**
    * Return a possibly shortened version of this code sequence by applying some simple
    * transformations. The src Block is passed as an argument for use in reporting any optimizations
@@ -147,19 +158,17 @@ public class Bind extends Code {
     } else if (c.isReturn(vs)) { // Rewrite (vs <- t; return vs) ==> t
       MILProgram.report("applied right monad law in " + src.getId());
       return new Done(t);
-    } else if (t.doesntReturn()) { // Rewrite (vs <- t; c) ==> t, if t doesn't return
+    } else if (t.blackholes()) { // Rewrite (vs <- loop(()); c) ==> loop(())
+      MILProgram.report("rewrite (vs <- loop(()); c) ==> loop(())");
+      return new Done(Prim.loop.withArgs());
+    } else if (t.doesntReturn()
+        && !c.blackholes()) { // Rewrite (vs <- t; c) ==> vs <- t; loop(()), if t doesn't return
       MILProgram.report("removed code after a tail that does not return in " + src.getId());
-      return new Done(t);
+      return new Bind(vs, t, new Done(Prim.loop.withArgs()));
     } else {
       c = c.cleanup(src);
       return this;
     }
-  }
-
-  boolean detectLoops(
-      Block src, Blocks visited) { // look for src(x) = (vs <- b[x]; ...), possibly with some
-    // initial prefix of pure bindings xs1 <- pt1; ...; xsn <- ptn
-    return t.detectLoops(src, visited) || (t.hasNoEffect() && c.detectLoops(src, visited));
   }
 
   /**
@@ -182,27 +191,11 @@ public class Bind extends Code {
       Code nc;
       if ((nc = c.enters(vs, bc)) != null) {
         MILProgram.report("pushed enter into call in " + src.getId());
-        // !System.out.println("Transformed code:");
-        // !this.dump();
-        // !System.out.println();
-        // !System.out.println("Transformed code:");
-        // !nc.dump();
-        // !System.out.println();
         return nc;
       } else if ((nc = c.casesOn(vs, bc)) != null) {
-        // !System.out.println("casesOn for:");
-        // !this.dump();
         MILProgram.report("pushed case into call in " + src.getId());
-        // !System.out.println("New code is:");
-        // !nc.dump();
-        // !System.out.println();
         return nc;
       }
-      // !      if ((nc = c.appliesTo(v, bc))!=null) {
-      // ! IN PROGRESS:
-      // !System.out.println("We could have used deriveWithCont here!");
-      // !dump();
-      // !      }
 
       t = bc.inlineBlockCall();
     }
@@ -215,7 +208,7 @@ public class Bind extends Code {
   }
 
   int prefixInlineLength(int len) {
-    return c.prefixInlineLength(len + 1);
+    return (t.blackholes() || t.noinline()) ? 0 : c.prefixInlineLength(len + 1);
   }
 
   /**
@@ -225,7 +218,7 @@ public class Bind extends Code {
    * 0 for the first call.
    */
   int suffixInlineLength(int len) {
-    return c.suffixInlineLength(len + 1);
+    return t.noinline() ? (-1) : c.suffixInlineLength(len + 1);
   }
 
   /**
@@ -321,26 +314,16 @@ public class Bind extends Code {
     if (as != null) {
       MILProgram.report(
           "applied left monad law for " + Atom.toString(vs) + " <- return " + Atom.toString(as));
-      // !System.out.println("Skipping a return");
       return c.flow(facts, TempSubst.extend(vs, as, s));
     }
 
     // Look for opportunities to rewrite this tail, perhaps using previous results
-    // !System.out.print("Looking for ways to rewrite tail "); t.dump(); System.out.println();
     Code nc = t.rewrite(facts); // Look for ways to rewrite the tail
-    // !System.out.println("In Bind, result was null: " + (nc==null));
     if (nc != null) {
-      // !System.out.println("Rewriting a tail");
-      // !nc.dump();
-      // !System.out.println("Expanded");
-      // !Code nc1 = nc.andThen(vs, c);
-      // !nc1.dump();
-      // !return nc1.flow(facts, s);
       return nc.andThen(vs, c).flow(facts, s);
     }
 
     // Propagate analysis to the following code, updating facts as necessary.
-    // !System.out.println("Propagating analysis");
     for (int i = 0; i < vs.length; i++) { // Kill any facts for the bound variables
       facts = vs[i].kills(facts);
     }
@@ -425,11 +408,7 @@ public class Bind extends Code {
     c.eliminateDuplicates();
   }
 
-  void collect() {
-    t.collect();
-    c.collect();
-  }
-
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     Atom.collect(vs, set);
     t.collect(set);
@@ -461,7 +440,7 @@ public class Bind extends Code {
   }
 
   /** Find the argument variables that are used in this Code sequence. */
-  Temps addArgs() throws Failure { // vs <- t; c
+  Temps addArgs() throws Failure {
     return t.addArgs(Temps.remove(vs, c.addArgs()));
   }
 
@@ -469,6 +448,16 @@ public class Bind extends Code {
   void countCalls() {
     t.countCalls();
     c.countCalls();
+  }
+
+  /**
+   * Count the number of calls to blocks, both regular and tail calls, in this abstract syntax
+   * fragment. This is suitable for counting the calls in the main function; unlike countCalls, it
+   * does not skip tail calls at the end of a code sequence.
+   */
+  void countAllCalls() {
+    t.countAllCalls();
+    c.countAllCalls();
   }
 
   /**
@@ -500,6 +489,6 @@ public class Bind extends Code {
    * end of the code.
    */
   llvm.Code toLLVMCode(LLVMMap lm, VarMap vm, TempSubst s, Label[] succs) {
-    return t.toLLVMCont(lm, vm, s, vs, c.toLLVMCode(lm, vm, s, succs));
+    return t.toLLVMBind(lm, vm, s, vs, false, c, succs);
   }
 }

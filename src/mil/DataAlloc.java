@@ -33,7 +33,7 @@ public class DataAlloc extends Allocator {
     this.cf = cf;
   }
 
-  /** Test to see if two Tail expressions are the same. */
+  /** Test if two Tail expressions are the same. */
   public boolean sameTail(Tail that) {
     return that.sameDataAlloc(this);
   }
@@ -43,8 +43,8 @@ public class DataAlloc extends Allocator {
   }
 
   /** Display a printable representation of this MIL construct on the specified PrintWriter. */
-  public void dump(PrintWriter out) {
-    dump(out, cf.toString(), "(", args, ")");
+  public void dump(PrintWriter out, Temps ts) {
+    dump(out, cf.toString(), "(", args, ")", ts);
   }
 
   /** Construct a new Call value that is based on the receiver, without copying the arguments. */
@@ -153,6 +153,7 @@ public class DataAlloc extends Allocator {
     return this.cf == that.cf && this.alphaArgs(thisvars, that, thatvars);
   }
 
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     if (type != null) {
       type = type.canonAllocType(set);
@@ -174,6 +175,8 @@ public class DataAlloc extends Allocator {
         debug.Internal.error("newtype constructor with arity!=1");
       }
       return new Return(args[0]); // and generate a Return instead
+    } else if (cf.isSingleton() && cf != Cfun.Unit) { // Look for a use of a singleton constructor
+      return new DataAlloc(Cfun.Unit).withArgs();
     }
     return this;
   }
@@ -196,7 +199,7 @@ public class DataAlloc extends Allocator {
   }
 
   Tail repTransform(RepTypeSet set, RepEnv env) {
-    return cf.repCfun().repTransformDataAlloc(set, Atom.repArgs(set, env, args));
+    return cf.repTransformDataAlloc(set, Atom.repArgs(set, env, args));
   }
 
   /**
@@ -204,14 +207,28 @@ public class DataAlloc extends Allocator {
    * having already established that all of the components (if any) are statically known.
    */
   llvm.Value staticAlloc(LLVMMap lm, llvm.Program prog, llvm.Value[] vals) {
-    vals[0] = new llvm.Int(cf.getNum()); // add tag at front of object
+    vals[0] = new llvm.Word(cf.getNum()); // add tag at front of object
     return staticAlloc(prog, vals, lm.cfunLayoutType(cf), cf.dataPtrType(lm));
   }
 
   /**
-   * Generate LLVM code to execute this Tail and return a result from the right hand side of a Bind.
+   * Generate LLVM code to execute this Tail with NO result from the right hand side of a Bind. Set
+   * isTail to true if the code sequence c is an immediate ret void instruction.
    */
-  llvm.Code toLLVMContBind(LLVMMap lm, VarMap vm, TempSubst s, llvm.Local lhs, llvm.Code c) {
+  llvm.Code toLLVMBindVoid(LLVMMap lm, VarMap vm, TempSubst s, boolean isTail, llvm.Code c) {
+    if (cf != Cfun.Unit) {
+      debug.Internal.error("DataAlloc does not return void");
+    }
+    return c;
+  }
+
+  /**
+   * Generate LLVM code to execute this Tail and return a result from the right hand side of a Bind.
+   * Set isTail to true if the code sequence c will immediately return the value in the specified
+   * lhs.
+   */
+  llvm.Code toLLVMBindCont(
+      LLVMMap lm, VarMap vm, TempSubst s, boolean isTail, llvm.Local lhs, llvm.Code c) {
     llvm.Type objt = lm.cfunLayoutType(cf).ptr(); // type of a pointer to a cf object
     llvm.Local obj = vm.reg(objt); // a register to point to the new object
     return alloc(
@@ -220,7 +237,7 @@ public class DataAlloc extends Allocator {
         s,
         objt,
         obj,
-        new llvm.Int(cf.getNum()),
+        new llvm.Word(cf.getNum()),
         new llvm.Op(lhs, new llvm.Bitcast(obj, cf.retType(lm)), c));
   }
 }

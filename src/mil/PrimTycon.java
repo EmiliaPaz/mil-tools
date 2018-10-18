@@ -19,21 +19,51 @@
 package mil;
 
 import compiler.*;
+import compiler.BuiltinPosition;
 import compiler.Position;
 import core.*;
+import java.io.PrintWriter;
 
 /** Represents a type constructor that is introduced as a primitive with no other definition. */
 public class PrimTycon extends Tycon {
 
-  protected int arity;
+  private Kind kind;
+
+  private int arity;
 
   /** Default constructor. */
   public PrimTycon(Position pos, String id, Kind kind, int arity) {
-    super(pos, id, kind);
+    super(pos, id);
+    this.kind = kind;
     this.arity = arity;
   }
 
+  /** Return the kind of this type constructor. */
+  public Kind getKind() {
+    return kind;
+  }
+
+  /** Return the arity of this type constructor. */
   public int getArity() {
     return arity;
+  }
+
+  public void fixKinds() {
+    kind = kind.fixKind();
+    debug.Log.println(id + " :: " + kind);
+  }
+
+  /** A constructor for defining types that have a BuiltinPosition. */
+  public PrimTycon(String id, Kind kind, int arity) {
+    this(BuiltinPosition.pos, id, kind, arity);
+    TyconEnv.builtin.add(this);
+  }
+
+  /**
+   * Print a definition for this type constructor using source level syntax. TODO: Find a more
+   * appropriate place for this code ...
+   */
+  void dumpTypeDefinition(PrintWriter out) {
+    /* do nothing */
   }
 }

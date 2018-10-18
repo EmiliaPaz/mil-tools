@@ -37,7 +37,7 @@ public class Case extends Code {
   /** A list of alternatives for this Case. */
   private Alt[] alts;
 
-  /** A default branch, to be used if none of the alternatives apply. */
+  /** A default branch, if none of the alternatives apply. */
   private BlockCall def;
 
   /** Default constructor. */
@@ -72,22 +72,26 @@ public class Case extends Code {
   }
 
   /** Display a printable representation of this MIL construct on the specified PrintWriter. */
-  public void dump(PrintWriter out) {
-    indentln(out, "case " + a + " of");
+  public void dump(PrintWriter out, Temps ts) {
+    indentln(out, "case " + a.toString(ts) + " of");
     for (int i = 0; i < alts.length; i++) {
       indent(out); // double indent
       indent(out);
-      alts[i].dump(out);
+      alts[i].dump(out, ts);
     }
     if (def != null) {
       indent(out); // double indent
       indent(out);
       out.print("_ -> ");
-      def.displayln(out);
+      def.displayln(out, ts);
     }
   }
 
-  /** Force the application of a TempSubst to this Code sequence. */
+  /**
+   * Force the application of a TempSubst to this Code sequence, forcing construction of a fresh
+   * copy of the input code structure, including the introduction of new temporaries in place of any
+   * variables introduced by Binds.
+   */
   public Code forceApply(TempSubst s) { // case a of alts; d
     Alt[] talts = new Alt[alts.length];
     for (int i = 0; i < alts.length; i++) {
@@ -178,14 +182,9 @@ public class Case extends Code {
    */
   public Code casesOn(Temp v, BlockCall bc) {
     if (a == v && bc.contCand()) {
-      // !System.out.println("We can use a cases optimization here ... !");
-      // !dump();
       // Construct a continuation for the derived block:
       Tail cont = makeCont(v);
       Temp w = new Temp();
-      // !System.out.print("The continuation is ");
-      // !cont.dump();
-      // !System.out.println();
 
       // Replace original code with call to a new derived block:
       return new Bind(w, cont, new Done(bc.deriveWithCont(w)));
@@ -394,15 +393,7 @@ public class Case extends Code {
     }
   }
 
-  void collect() {
-    if (def != null) {
-      def.collect();
-    }
-    for (int i = 0; i < alts.length; i++) {
-      alts[i].collect();
-    }
-  }
-
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     a.collect(set);
     if (dom != null) {
@@ -421,7 +412,7 @@ public class Case extends Code {
     // If there are no alternatives, replace this Case with a Done:
     if (alts.length == 0) { // no alternatives; use default
       MILProgram.report("eliminating case with no alternatives");
-      return (def == null) ? Code.halt : new Done(def);
+      return (def == null) ? new Done(Prim.halt.withArgs()) : new Done(def);
     }
 
     // Determine which constructor numbers are covered by alts:
@@ -446,6 +437,7 @@ public class Case extends Code {
         MILProgram.report("eliminating case on single constructor type");
         return new Done(alts[0].getBlockCall());
       }
+      // TODO: if count==0, then we could introduce a halt(()) for unreachable code ...
       def = null; // Eliminate the default case
     } else if (count == used.length - 1 && def != null) {
       // Promote a default to a regular alternative for better flow results:
@@ -474,9 +466,9 @@ public class Case extends Code {
   }
 
   Code repTransform(RepTypeSet set, RepEnv env) {
-    BitdataName bn = dom.bitdataName();
-    if (bn != null) {
-      return Alt.repTransformBitdataCase(set, env, bn, a, alts, def);
+    BitdataType bt = dom.bitdataType();
+    if (bt != null) {
+      return Alt.repTransformBitdataCase(set, env, bt, a, alts, def);
     } else {
       // We're assuming that cfunRewrite has already been applied; one consequence is that we don't
       // have to
@@ -491,7 +483,7 @@ public class Case extends Code {
   }
 
   /** Find the argument variables that are used in this Code sequence. */
-  Temps addArgs() throws Failure { // case a of alts; d
+  Temps addArgs() throws Failure {
     Temps vs = (def == null) ? null : def.addArgs(null);
     for (int i = 0; i < alts.length; i++) {
       vs = Temps.add(alts[i].addArgs(), vs);
@@ -502,6 +494,17 @@ public class Case extends Code {
   /** Count the number of non-tail calls to blocks in this abstract syntax fragment. */
   void countCalls() {
     /* no non-tail calls here */
+  }
+
+  /**
+   * Count the number of calls to blocks, both regular and tail calls, in this abstract syntax
+   * fragment. This is suitable for counting the calls in the main function; unlike countCalls, it
+   * does not skip tail calls at the end of a code sequence.
+   */
+  void countAllCalls() {
+    for (int i = 0; i < alts.length; i++) {
+      alts[i].countAllCalls();
+    }
   }
 
   /**

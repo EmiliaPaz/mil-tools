@@ -42,20 +42,25 @@ public class Enter extends Call {
     this.args = args;
   }
 
-  /** Test to see if this Tail expression includes a free occurrence of a particular variable. */
+  /** Test if this Tail expression includes a free occurrence of a particular variable. */
   public boolean contains(Temp w) {
     return f == w || super.contains(w);
   }
 
   /**
-   * Test to see if this Tail expression includes an occurrence of any of the variables listed in
-   * the given array.
+   * Test if this Tail expression includes an occurrence of any of the variables listed in the given
+   * array.
    */
   public boolean contains(Temp[] ws) {
     return f.occursIn(ws) || super.contains(ws);
   }
 
-  /** Test to see if two Tail expressions are the same. */
+  /** Add the variables mentioned in this tail to the given list of variables. */
+  public Temps add(Temps vs) {
+    return f.add(super.add(vs));
+  }
+
+  /** Test if two Tail expressions are the same. */
   public boolean sameTail(Tail that) {
     return that.sameEnter(this);
   }
@@ -70,17 +75,15 @@ public class Enter extends Call {
   }
 
   /** Display a printable representation of this MIL construct on the specified PrintWriter. */
-  public void dump(PrintWriter out) {
-    out.print(f + " @ ");
-    Atom.displayTuple(out, args);
+  public void dump(PrintWriter out, Temps ts) {
+    out.print(f.toString(ts) + " @ ");
+    Atom.displayTuple(out, args, ts);
   }
 
-  /** Add the variables mentioned in this tail to the given list of variables. */
-  public Temps add(Temps vs) {
-    return f.add(super.add(vs));
-  }
-
-  /** Apply a TempSubst to this Tail. */
+  /**
+   * Apply a TempSubst to this Tail. A call to this method, even if the substitution is empty, will
+   * force the construction of a new Tail.
+   */
   public Tail forceApply(TempSubst s) {
     return new Enter(f.apply(s), TempSubst.apply(args, s));
   }
@@ -223,6 +226,7 @@ public class Enter extends Call {
     return this.f.alphaAtom(thisvars, that.f, thatvars) && this.alphaArgs(thisvars, that, thatvars);
   }
 
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     if (outputs != null) {
       outputs = outputs.canonType(set);
@@ -251,28 +255,38 @@ public class Enter extends Call {
     return new Enter(f).withArgs(nargs);
   }
 
-  /** Generate LLVM code to execute this Tail with NO result from the right hand side of a Bind. */
-  llvm.Code toLLVMContVoid(LLVMMap lm, VarMap vm, TempSubst s, llvm.Code c) {
+  /**
+   * Generate LLVM code to execute this Tail with NO result from the right hand side of a Bind. Set
+   * isTail to true if the code sequence c is an immediate ret void instruction.
+   */
+  llvm.Code toLLVMBindVoid(LLVMMap lm, VarMap vm, TempSubst s, boolean isTail, llvm.Code c) {
     llvm.Value[] acts = closureActuals(lm, vm, s); // actual parameters
     llvm.Local cptr = vm.reg(lm.toLLVM(ftype)); // a register to hold the code pointer
-    return enterCode(vm, acts[0], cptr, new llvm.CallVoid(cptr, acts, c));
+    return enterCode(vm, acts[0], cptr, new llvm.CallVoid(isTail, cptr, acts, c));
   }
 
   /**
    * Generate LLVM code to execute this Tail and return a result from the right hand side of a Bind.
+   * Set isTail to true if the code sequence c will immediately return the value in the specified
+   * lhs.
    */
-  llvm.Code toLLVMContBind(LLVMMap lm, VarMap vm, TempSubst s, llvm.Local lhs, llvm.Code c) {
+  llvm.Code toLLVMBindCont(
+      LLVMMap lm, VarMap vm, TempSubst s, boolean isTail, llvm.Local lhs, llvm.Code c) {
     llvm.Value[] acts = closureActuals(lm, vm, s); // actual parameters
     llvm.Local cptr = vm.reg(lm.codePtrType(ftype)); // a register to hold the code pointer
     return enterCode(
-        vm, acts[0], cptr, new llvm.Op(lhs, new llvm.Call(ftype.retType(lm), cptr, acts), c));
+        vm,
+        acts[0],
+        cptr,
+        new llvm.Op(lhs, new llvm.Call(isTail, ftype.retType(lm), cptr, acts), c));
   }
 
   llvm.Value[] closureActuals(LLVMMap lm, VarMap vm, TempSubst s) {
-    llvm.Value[] acts = new llvm.Value[1 + args.length]; // make the argument list
+    Atom[] nuargs = Atom.nonUnits(args);
+    llvm.Value[] acts = new llvm.Value[1 + nuargs.length]; // make the argument list
     acts[0] = f.toLLVMAtom(lm, vm, s); // a pointer to the closure for f as an llvm value
-    for (int i = 0; i < args.length; i++) { // with llvm values for each of the function arguments
-      acts[i + 1] = args[i].toLLVMAtom(lm, vm, s);
+    for (int i = 0; i < nuargs.length; i++) { // with llvm values for each of the function arguments
+      acts[i + 1] = nuargs[i].toLLVMAtom(lm, vm, s);
     }
     return acts;
   }
@@ -286,13 +300,12 @@ public class Enter extends Call {
     // represented by a value of type %t.layout*, where:
     //     type %t.layout = { %t.entry* }     -- layout of a generic dom ->> rng closure in memory
     //     type %t.entry  = rng' (%t.layout*, dom')  -- rng' and dom' corresponding to rng and dom
+    llvm.Type ct = cptr.getType().ptr();
     llvm.Local cptrptr =
-        vm.reg(
-            cptr.getType()
-                .ptr()); // a register to hold the address where the code pointer is stored
+        vm.reg(ct); // a register to hold the address where the code pointer is stored
     return new llvm.Op(
         cptrptr,
-        new llvm.Getelementptr(clo, llvm.Int.ZERO, llvm.Int.ZERO), // 0th field of 0th closure
+        new llvm.Getelementptr(ct, clo, llvm.Word.ZERO, llvm.Word.ZERO), // 0th field of 0th closure
         new llvm.Op(
             cptr,
             new llvm.Load(cptrptr), // load function address

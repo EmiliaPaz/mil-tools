@@ -52,6 +52,25 @@ public class TopDef extends Top {
     return topLevel.getId(i);
   }
 
+  /**
+   * Test to see if two atoms are the same. For Temp values, we use pointer equality to determine
+   * object equality. For all other types of Atom, we use double dispatch to compare component
+   * values.
+   */
+  public boolean sameAtom(Atom that) {
+    return that.sameTopDef(topLevel, i);
+  }
+
+  /** Test to determine whether this Atom refers to the ith TopLhs in the given TopLevel. */
+  boolean sameTopDef(TopLevel topLevel, int i) {
+    return this.topLevel == topLevel && this.i == i;
+  }
+
+  /** Return the definition associated with this Top object. */
+  public Defn getDefn() {
+    return topLevel;
+  }
+
   /** Find the dependencies of this AST fragment. */
   public Defns dependencies(Defns ds) {
     return topLevel.dependencies(ds);
@@ -104,14 +123,6 @@ public class TopDef extends Top {
     return topLevel.lookForDataAlloc();
   }
 
-  /**
-   * Determine whether this src argument is a value base (i.e., a numeric or global/primitive
-   * constant) that is suitable for use in complex addressing modes.
-   */
-  boolean isBase() {
-    return topLevel.isBase();
-  }
-
   Atom specializeAtom(MILSpec spec, TVarSubst s, SpecEnv env) {
     // Find the type for this specific instance:
     Type inst = type.apply(s);
@@ -123,11 +134,7 @@ public class TopDef extends Top {
     return set.topDef(topLevel, i);
   }
 
-  Defn getDefn() {
-    return topLevel;
-  }
-
-  void setDeclared(Handler handler, Position pos, Scheme scheme) {
+  public void setDeclared(Handler handler, Position pos, Scheme scheme) {
     topLevel.setDeclared(handler, pos, i, scheme);
   }
 
@@ -141,18 +148,5 @@ public class TopDef extends Top {
    */
   llvm.Value calcStaticValue() {
     return topLevel.staticValue(i);
-  }
-
-  /**
-   * Test to determine whether two Top values refer to the same item. Implemented using double
-   * dispatch.
-   */
-  boolean sameTop(Top that) {
-    return that.sameTopDef(topLevel, i);
-  }
-
-  /** Test to determine whether this Top refers to the ith TopLhs in the given TopLevel. */
-  boolean sameTopDef(TopLevel topLevel, int i) {
-    return this.topLevel == topLevel && this.i == i;
   }
 }

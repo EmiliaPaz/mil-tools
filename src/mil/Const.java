@@ -24,6 +24,11 @@ import java.math.BigInteger;
 
 public abstract class Const extends Atom {
 
+  /** Apply a TempSubst to this Atom. */
+  public Atom apply(TempSubst s) {
+    return this;
+  }
+
   /** Generate code to copy the data for this atom into the specified frame slot. */
   void copyTo(int dst, MachineBuilder builder) {
     builder.gcopy(constValue(), dst);
@@ -41,21 +46,11 @@ public abstract class Const extends Atom {
     return true;
   }
 
-  /**
-   * Update the information that we have recorded about a given formal parameter to reflect the use
-   * of this actual parameter. The input, orig, will be one of: - null, indicating that no previous
-   * information has been found - a specific Const or Top, indicating that this single value was
-   * used in all previous calls - a special value, top, indicating that multiple distinct values
-   * have been encountered in previous calls.
-   */
-  Atom update(Atom orig) {
-    return (orig == null || orig.sameAtom(this)) ? this : Atom.top;
-  }
-
   Atom isKnown() {
     return this;
   }
 
+  /** Collect the set of types in this AST fragment and replace them with canonical versions. */
   void collect(TypeSet set) {
     instantiate().canonType(set);
   }
@@ -78,19 +73,28 @@ public abstract class Const extends Atom {
     if (w == 0) {
       return new Atom[] {Top.Unit};
     } else if (w == 1) {
-      return new FlagConst[] {FlagConst.fromBool(v.compareTo(BigInteger.ZERO) != 0)};
+      return new Flag[] {Flag.fromBool(v.compareTo(BigInteger.ZERO) != 0)};
     } else {
-      IntConst[] as = new IntConst[Type.numWords(w)];
+      Word[] as = new Word[Word.numWords(w)];
+      int wordsize = Word.size();
       int i = 0; // index into array as (least significant word first)
       while (w > 0) { // while there are still bits to write
-        int bits = v.intValue(); // get least significant bits
-        if ((w -= Type.WORDSIZE) < 0) { // truncate if necessary
-          bits &= (1 << (Type.WORDSIZE + w)) - 1;
+        long bits = Word.fromBig(v); // get least significant bits
+        if ((w -= wordsize) < 0) { // truncate if necessary
+          bits &= (1L << (wordsize + w)) - 1;
         }
-        as[i++] = new IntConst(bits); // save word value
-        v = v.shiftRight(Type.WORDSIZE); // discard least significant bits
+        as[i++] = new Word(bits); // save word value
+        v = v.shiftRight(wordsize); // discard least significant bits
       }
       return as;
     }
+  }
+
+  /**
+   * Determine whether this item is for a non-Unit, corresponding to a value that requires a
+   * run-time representation in the generated LLVM.
+   */
+  boolean nonUnit() {
+    return true;
   }
 }

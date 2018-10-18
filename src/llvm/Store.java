@@ -31,7 +31,7 @@ public class Store extends Code {
   /** The location where it will be stored. */
   Value addr;
 
-  /** Points to the rest of the code in this basic block. */
+  /** The rest of the code in this basic block. */
   private Code next;
 
   /** Default constructor. */
@@ -47,6 +47,10 @@ public class Store extends Code {
     next.print(out);
   }
 
+  /**
+   * Utility function for reverseOnto(): handle type specific manipulations for adjusting the
+   * pointers in this Code object when it is added to the front of the specified code sequence.
+   */
   Code rotateOnto(Code rest) {
     Code next = this.next;
     this.next = rest;

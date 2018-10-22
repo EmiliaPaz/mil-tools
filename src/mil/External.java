@@ -312,11 +312,30 @@ public class External extends TopDefn {
           throw new Failure(
               pos, "Generator for " + ref + " needs at least " + gen.needs + " arguments");
         }
-        try { // ... and try to produce an implementation
-          topLevelImpl(id, reps, gen.generate(pos, ts, set), isEntrypoint);
+        Tail t; // ... and try to produce an implementation
+        try {
+          t = gen.generate(pos, ts, set);
         } catch (GeneratorException e) {
           throw new Failure(pos, "No generated implementation: " + e.getReason());
         }
+        TopLhs[] lhs; // Generate a suitable left hand side
+        if (reps == null) { // No change in representation
+          lhs = new TopLhs[] {new TopLhs(id)}; // ==> single left hand side
+          lhs[0].setDeclared(declared);
+        } else { // Change in representation
+          lhs = new TopLhs[reps.length]; // ==> may require multiple left hand sides
+          for (int i = 0; i < reps.length; i++) {
+            lhs[i] = new TopLhs(mkid(id, i));
+            lhs[i].setDeclared(reps[i]);
+          }
+        }
+        // TODO: it seems inconsistent to use a HashMap for topLevelRepMap, while using a field here
+        // ...
+        impl =
+            new TopLevel(
+                pos, lhs, t); // Make new top level to use as the replacement for this External
+        impl.setIsEntrypoint(isEntrypoint);
+        debug.Log.println("Generated new top level definition for " + impl);
         return;
       }
       if (ts.length > 0) {
@@ -332,13 +351,16 @@ public class External extends TopDefn {
     } else if (reps.length == 1) {
       generatePrim(id, reps[0]);
     } else {
-      Atom[] exts = new Atom[reps.length];
+      TopLhs[] lhs = new TopLhs[reps.length];
+      Atom[] rhs = new Atom[reps.length];
       for (int i = 0; i < reps.length; i++) {
         External ext = new External(pos, mkid(id, i), reps[i], null, null);
         ext.setIsEntrypoint(isEntrypoint);
-        exts[i] = new TopExt(ext);
+        rhs[i] = new TopExt(ext);
+        lhs[i] = id.equals(this.id) ? new TopLhs() : new TopLhs(mkid(id, i));
       }
-      topLevelImpl(id, reps, new Return(exts), false);
+      impl = new TopLevel(pos, lhs, new Return(rhs));
+      impl.setIsEntrypoint(isEntrypoint && !id.equals(this.id));
     }
   }
 
@@ -365,27 +387,8 @@ public class External extends TopDefn {
         lhs.setDeclared(declared);
         impl = new TopLevel(pos, new TopLhs[] {lhs}, new Return(new TopExt(ext)));
       }
-      impl.setIsEntrypoint(isEntrypoint);
     }
-  }
-
-  private void topLevelImpl(String id, Type[] reps, Tail t, boolean isEntrypoint) {
-    TopLhs[] lhs; // Create a left hand side for the new top level definition
-    if (reps == null) { // No change in type representation:
-      lhs = new TopLhs[] {new TopLhs(id)};
-      lhs[0].setDeclared(declared);
-    } else { // Create new left hand sides that reflect change in representation
-      lhs = new TopLhs[reps.length];
-      for (int i = 0; i < reps.length; i++) {
-        lhs[i] = new TopLhs(mkid(id, i));
-        lhs[i].setDeclared(reps[i]);
-      }
-    }
-    // TODO: it seems inconsistent to use a HashMap for topLevelRepMap, while using a field here ...
-    impl =
-        new TopLevel(pos, lhs, t); // Make new top level to use as the replacement for this External
     impl.setIsEntrypoint(isEntrypoint);
-    debug.Log.println("Generated new top level definition for " + impl);
   }
 
   /**
@@ -442,15 +445,58 @@ public class External extends TopDefn {
         "primBitToWord",
         new Generator(1) {
           Tail generate(Position pos, Type[] ts, RepTypeSet set) throws GeneratorException {
-            int w = ts[0].validWidth();
-            if (w < 2 || w > Word.size()) { // TODO: provide implementations for Bit 0 and Bit 1?
-              throw new GeneratorException(
-                  "parameter "
-                      + w
-                      + " not accepted; value must be in the range 2 to "
-                      + Word.size());
+            int width = ts[0].validWidth();
+            switch (width) {
+              case 0:
+                return new Return(Word.Zero).constClosure(pos, 1);
+
+              case 1:
+                return new PrimCall(Prim.flagToWord).makeUnaryFuncClosure(pos, 1);
+
+              default:
+                if (width < 0 || width > Word.size()) {
+                  throw new GeneratorException(
+                      "parameter "
+                          + width
+                          + " not accepted; value must be in the range 0 to "
+                          + Word.size());
+                }
+                return new Return().makeUnaryFuncClosure(pos, 1);
             }
-            return new Return().makeUnaryFuncClosure(pos, 1);
+          }
+        });
+
+    // primWordToBit w :: Word -> Bit w
+    generators.put(
+        "primWordToBit",
+        new Generator(1) {
+          Tail generate(Position pos, Type[] ts, RepTypeSet set) throws GeneratorException {
+            int width = ts[0].validWidth();
+            switch (width) {
+              case 0:
+                return new DataAlloc(Cfun.Unit).withArgs().constClosure(pos, 1);
+
+              case 1:
+                {
+                  Temp[] vs = Temp.makeTemps(1);
+                  Tail t = Prim.neq.withArgs(vs[0], Word.Zero);
+                  return new ClosAlloc(new ClosureDefn(pos, Temp.noTemps, vs, t)).withArgs();
+                }
+
+              default:
+                if (width < 0 || width > Word.size()) {
+                  throw new GeneratorException(
+                      "parameter "
+                          + width
+                          + " not accepted; value must be in the range 0 to "
+                          + Word.size());
+                } else if (width != Word.size()) {
+                  Temp[] vs = Temp.makeTemps(1);
+                  Tail t = Prim.and.withArgs(vs[0], (1L << width) - 1);
+                  return new ClosAlloc(new ClosureDefn(pos, Temp.noTemps, vs, t)).withArgs();
+                }
+                return new Return().makeUnaryFuncClosure(pos, 1);
+            }
           }
         });
 
@@ -517,9 +563,9 @@ public class External extends TopDefn {
           }
         });
 
-    // primIxToBits m w :: Ix m -> Bit w
+    // primIxToBit m w :: Ix m -> Bit w
     generators.put(
-        "primIxToBits",
+        "primIxToBit",
         new Generator(2) {
           Tail generate(Position pos, Type[] ts, RepTypeSet set) throws GeneratorException {
             BigInteger m = ts[0].validIndex(); // Modulus for index type

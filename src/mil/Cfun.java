@@ -57,6 +57,10 @@ public class Cfun extends Name {
     return allocType.getArity();
   }
 
+  /**
+   * Get the array of constructor functions associated with this object, or return null if this is
+   * not a DataName.
+   */
   public Cfun[] getCfuns() {
     return dn.getCfuns();
   }
@@ -196,10 +200,11 @@ public class Cfun extends Name {
 
   /**
    * Return the canonical version of this constructor function (by looking it up in the associated
-   * canonical DataName).
+   * canonical Tycon, which---by an invariant not currently captured in the types---must be a
+   * DataName).
    */
   Cfun canonCfun(TypeSet set) {
-    return dn.canonDataName(set).getCfuns()[num];
+    return dn.canonTycon(set).getCfuns()[num];
   }
 
   /**
@@ -240,6 +245,7 @@ public class Cfun extends Name {
     return dn.specializeDataName(spec, inst).getCfuns()[num];
   }
 
+  /** Find the bitdata representation for this object, or null if there is none. */
   BitdataRep findRep(BitdataMap m) {
     return dn.findRep(m);
   }
@@ -267,6 +273,7 @@ public class Cfun extends Name {
       offset += width;
     }
     BitdataLayout layout = new BitdataLayout(pos, id, bt, tagbits, fields, p);
+    layout.addCfun();
     layout.setMaskTest(mt);
     return layout;
   }

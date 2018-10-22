@@ -53,13 +53,6 @@ public class BitdataLayout extends DataName {
     this.tagbits = tagbits;
     this.fields = fields;
     this.pat = pat;
-
-    Type[] stored = new Type[fields.length];
-    for (int i = 0; i < fields.length; i++) {
-      stored[i] = fields[i].getType();
-    }
-    cfuns =
-        new Cfun[] {new Cfun(pos, bt + "." + id, this, 0, new AllocType(stored, this.asType()))};
   }
 
   public BitdataField[] getFields() {
@@ -104,6 +97,18 @@ public class BitdataLayout extends DataName {
   /** Return the bit pattern for this object. */
   public obdd.Pat getPat() {
     return pat;
+  }
+
+  /**
+   * Add the constructor for this BitdataLayout using the details specified in the array of fields.
+   */
+  public void addCfun() {
+    Type[] stored = new Type[fields.length];
+    for (int i = 0; i < fields.length; i++) {
+      stored[i] = fields[i].getType();
+    }
+    cfuns =
+        new Cfun[] {new Cfun(pos, bt + "." + id, this, 0, new AllocType(stored, this.asType()))};
   }
 
   /** Return the constructor function for this layout. */
@@ -168,22 +173,41 @@ public class BitdataLayout extends DataName {
   }
 
   /**
-   * Return the canonical version of a DataName wrt the given set, replacing component types with
-   * canonical versions as necessary. This is extracted as a separate method from canonTycon so that
-   * it can be used in canonCfun, with a return type that guarantees a DataName result.
+   * Make a canonical version of a type definition wrt the given set, replacing component types with
+   * canonical versions as necessary. We only need implementations of this method for StructType and
+   * (subclasses of) DataName.
    */
-  DataName canonDataName(TypeSet set) {
-    // We do not need to calculate a new version of bitdata types because we know that none of the
-    // Cfun types will change (they are all of the form T.Lab -> T).  It is sufficient just to
-    // register
-    // occurrences in the tycons set so that we have a full record of which tycons are actually
-    // used.
-    set.addTycon(this);
-    return this;
+  Tycon makeCanonTycon(TypeSet set) {
+    bt.canonTycon(set); // force the calculation of the associated canonical BitdataType ...
+    return set.mapsTyconTo(
+        this); // ... to ensure that the associated layout has been added to the set
+    // (even if it hasn't been fully initialized yet).
   }
 
-  BitdataRep findRep(BitdataMap m) {
-    return null;
+  /** Make a new version of this bitdata layout using types that are canonical wrt the given set. */
+  BitdataLayout makeCanonBitdataLayout(TypeSet set, BitdataType newBt) {
+    BitdataLayout nlayout =
+        new BitdataLayout(pos, id, newBt, tagbits, fields, pat); // use old fields to begin ...
+    nlayout.maskTest = maskTest;
+    nlayout.maskTestBlock = maskTestBlock;
+    nlayout.constructorBlock = constructorBlock;
+    set.mapTycon(this, nlayout); // Add mapping from old layout to canonical version
+    return nlayout;
+  }
+
+  /**
+   * Replace the list of fields in this layout with canonical versions. Separated from
+   * makeCanonBitdataLayout so that we can build all of the layouts (and add their new
+   * implementations to the tyconMap) before we attempt to calculate canonical versions of field
+   * types.
+   */
+  void makeCanonFields(TypeSet set) {
+    BitdataField[] nfields = new BitdataField[fields.length];
+    for (int i = 0; i < fields.length; i++) {
+      nfields[i] = fields[i].makeCanonBitdataField(set);
+    }
+    fields = nfields; // Switch to the new list of fields
+    addCfun(); // and then calculate the new Cfun
   }
 
   static Cfun[] calcCfuns(BitdataLayout[] layouts) {
@@ -230,7 +254,7 @@ public class BitdataLayout extends DataName {
   }
 
   Tail repTransformDataAlloc(RepTypeSet set, Cfun cf, Atom[] args) {
-    return new BlockCall(constructorBlock, args);
+    return construct(args);
   }
 
   Tail repTransformSel(RepTypeSet set, RepEnv env, Cfun cf, int n, Atom a) {
@@ -241,7 +265,24 @@ public class BitdataLayout extends DataName {
     return new Bind(vs, repTransformSel(set, env, cf, n, a), c);
   }
 
+  /** Return the nat that specifies the bit size of the type produced by this type constructor. */
+  public Type bitSize() {
+    return bt.bitSize();
+  }
+
+  /**
+   * Determine whether a selector from this layout will (in general) require a masking operation.
+   */
+  boolean selectNeedsMask() {
+    return tagbits.signum() != 0 || fields.length != 1;
+  }
+
   private Block constructorBlock;
+
+  /** Return a call to the constructor block for this layout. */
+  public BlockCall construct(Atom[] args) {
+    return new BlockCall(constructorBlock, args);
+  }
 
   /** Generate code for a constructor for this layout. */
   public void generateConstructor(Cfun cf) {
@@ -402,10 +443,5 @@ public class BitdataLayout extends DataName {
     for (int i = 0; i < fields.length; i++) {
       fields[i].calculateBitdataBlocks(this);
     }
-  }
-
-  /** Return the nat that specifies the bit size of the type produced by this type constructor. */
-  public Type bitSize() {
-    return bt.bitSize();
   }
 }

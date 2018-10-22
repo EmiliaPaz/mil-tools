@@ -135,18 +135,39 @@ public class StructType extends Tycon {
 
   /** Return the canonical version of a Tycon wrt to the given set. */
   Tycon canonTycon(TypeSet set) {
-    set.addTycon(this);
-    return this;
+    Tycon ntycon = set.mapsTyconTo(this);
+    if (ntycon != null) { // Use previously computed canonical version if available
+      return ntycon;
+    } else if (set.containsTycon(
+        this)) { // Tycon is already in the target?  (TODO: is this still necessary?)
+      return this;
+    }
+    return makeCanonTycon(set); // But otherwise, make a new canonical version
   }
 
   /**
-   * Return a primitive for turning an initializer for the ith field of this structure into an
-   * initializer for the full structure. This primitive is used exclusively in the code that is
-   * generated for structure initializers, which ensures that it will be part of a set of
-   * initializers that, together, initialize the full structure.
+   * Make a canonical version of a type definition wrt the given set, replacing component types with
+   * canonical versions as necessary. We only need implementations of this method for StructType and
+   * (subclasses of) DataName.
    */
-  public Prim initStructFieldPrim(int i) {
-    return fields[i].initStructFieldPrim(this);
+  Tycon makeCanonTycon(TypeSet set) {
+    if (fields.length == 0) { // Do not make copies of structures with no fields
+      set.addTycon(this); // (but still register them as being in use)
+      return this;
+    } else {
+      debug.Log.println("making new version of structure type " + id);
+      StructType newSt = new StructType(pos, id);
+      set.mapTycon(
+          this, newSt); // Add mapping before attempting to find canonical versions of fields.
+      debug.Log.println("new version of StructType " + id + " is " + newSt);
+      newSt.byteSize = byteSize;
+      newSt.alignment = alignment;
+      newSt.fields = new StructField[fields.length];
+      for (int i = 0; i < fields.length; i++) {
+        newSt.fields[i] = fields[i].makeCanonStructField(set);
+      }
+      return newSt;
+    }
   }
 
   /** Return the nat that specifies the byte size of the type produced by this type constructor. */
@@ -157,5 +178,15 @@ public class StructType extends Tycon {
   /** Return the alignment associated with this type constructor. */
   public long alignment() {
     return alignment;
+  }
+
+  /**
+   * Return a primitive for turning an initializer for the ith field of this structure into an
+   * initializer for the full structure. This primitive is used exclusively in the code that is
+   * generated for structure initializers, which ensures that it will be part of a set of
+   * initializers that, together, initialize the full structure.
+   */
+  public Prim initStructFieldPrim(int i) {
+    return fields[i].initStructFieldPrim(this);
   }
 }

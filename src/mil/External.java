@@ -243,7 +243,7 @@ public class External extends TopDefn {
     Type t = declared.isMonomorphic();
     if (t != null) {
       External e = spec.specializedExternal(this, t);
-      e.id = this.id;
+      e.id = this.id; // use the same name as in the original program
       return e;
     }
     throw new PolymorphicEntrypointFailure("external", this);
@@ -388,6 +388,19 @@ public class External extends TopDefn {
     debug.Log.println("Generated new top level definition for " + impl);
   }
 
+  /**
+   * Rewrite this definition, replacing TopLevels that introduce curried function values with
+   * corresponding uncurried blocks. No changes are made to other forms of definition.
+   */
+  Defn makeEntryBlock() {
+    return (impl == null) ? this : impl.makeEntryBlock();
+  }
+
+  /** Rewrite the components of this definition to account for changes in representation. */
+  void repTransform(Handler handler, RepTypeSet set) {
+    /* Processing of External definitions was completed during the first pass. */
+  }
+
   /** Flag to indicate whether bitdata representations (e.g., for Maybe (Ix 15)) are in use. */
   private static boolean bitdataRepresentations = false;
 
@@ -400,6 +413,14 @@ public class External extends TopDefn {
     if (!bitdataRepresentations) {
       throw new GeneratorException("bitdata representations (\"b\" pass) required");
     }
+  }
+
+  static Tail unaryUnit(Position pos) { // Tail for \x -> Unit, i.e., k{} where k{} x = Unit()
+    return new DataAlloc(Cfun.Unit).withArgs().constClosure(pos, 1);
+  }
+
+  static Tail binaryUnit(Position pos) { // Tail for \y -> \x -> Unit
+    return unaryUnit(pos).constClosure(pos, 1);
   }
 
   static {
@@ -466,7 +487,7 @@ public class External extends TopDefn {
                       + " will not fit in a bit vector of width "
                       + m);
             }
-            return new BlockCall(BitdataField.generateBitSelector(pos, true, o, n, m))
+            return new BlockCall(BitdataField.generateBitSelector(pos, true, n < m, o, n, m))
                 .makeUnaryFuncClosure(pos, Word.numWords(m));
           }
         });
@@ -819,14 +840,6 @@ public class External extends TopDefn {
     genIxCompare("primIxLe", Prim.ule);
     genIxCompare("primIxGt", Prim.ugt);
     genIxCompare("primIxGe", Prim.uge);
-  }
-
-  static Tail unaryUnit(Position pos) { // Tail for \x -> Unit, i.e., k{} where k{} x = Unit()
-    return new DataAlloc(Cfun.Unit).withArgs().constClosure(pos, 1);
-  }
-
-  static Tail binaryUnit(Position pos) { // Tail for \y -> \x -> Unit
-    return unaryUnit(pos).constClosure(pos, 1);
   }
 
   static {
@@ -1883,19 +1896,6 @@ public class External extends TopDefn {
             return new ClosAlloc(k).makeUnaryFuncClosure(pos, 1);
           }
         });
-  }
-
-  /**
-   * Rewrite this definition, replacing TopLevels that introduce curried function values with
-   * corresponding uncurried blocks. No changes are made to other forms of definition.
-   */
-  Defn makeEntryBlock() {
-    return (impl == null) ? this : impl.makeEntryBlock();
-  }
-
-  /** Rewrite the components of this definition to account for changes in representation. */
-  void repTransform(Handler handler, RepTypeSet set) {
-    /* Processing of External definitions was completed during the first pass. */
   }
 
   /** Add this exported definition to the specified MIL environment. */
